@@ -82,6 +82,27 @@ This project now exposes a helper endpoint to document what is currently returne
 - `AEMET_JUAN_STATION_ID` (default: `89070`)
 - `CACHE_FRESHNESS_SECONDS` (default: `10800`, i.e. 3 hours)
 
+## Get AEMET API key
+
+1. Open [AEMET OpenData](https://opendata.aemet.es/centrodedescargas/inicio)
+2. Go to [API key request page](https://opendata.aemet.es/centrodedescargas/obtencionAPIKey)
+3. Submit your email and captcha
+4. Wait for the email containing your API key
+
+## Local `.env` setup
+
+```bash
+cp .env.example .env
+```
+
+Set your key in `.env`:
+
+```dotenv
+AEMET_API_KEY=your_real_key_here
+```
+
+The backend now loads `.env` automatically (current working directory first, then project root).
+
 ## Run backend
 
 ```bash

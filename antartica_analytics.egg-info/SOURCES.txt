@@ -1,5 +1,10 @@
 README.md
 pyproject.toml
+antartica_analytics.egg-info/PKG-INFO
+antartica_analytics.egg-info/SOURCES.txt
+antartica_analytics.egg-info/dependency_links.txt
+antartica_analytics.egg-info/requires.txt
+antartica_analytics.egg-info/top_level.txt
 app/__init__.py
 app/aemet_client.py
 app/database.py
@@ -7,10 +12,5 @@ app/main.py
 app/models.py
 app/service.py
 app/settings.py
-antartica_analytics.egg-info/PKG-INFO
-antartica_analytics.egg-info/SOURCES.txt
-antartica_analytics.egg-info/dependency_links.txt
-antartica_analytics.egg-info/requires.txt
-antartica_analytics.egg-info/top_level.txt
 tests/test_api.py
 tests/test_service.py

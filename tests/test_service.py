@@ -101,7 +101,7 @@ def test_hourly_aggregation_and_filter_types():
 def test_daily_aggregation_uses_europe_madrid_dst_boundary():
     rows = [
         SourceMeasurement(station_name="X", measured_at_utc=datetime(2024, 3, 30, 23, 30, tzinfo=UTC), temperature_c=2.0, pressure_hpa=1000.0, speed_mps=1.0),
-        SourceMeasurement(station_name="X", measured_at_utc=datetime(2024, 3, 31, 22, 30, tzinfo=UTC), temperature_c=4.0, pressure_hpa=1002.0, speed_mps=3.0),
+        SourceMeasurement(station_name="X", measured_at_utc=datetime(2024, 3, 31, 21, 30, tzinfo=UTC), temperature_c=4.0, pressure_hpa=1002.0, speed_mps=3.0),
     ]
     service, _, _ = build_service(rows)
 
