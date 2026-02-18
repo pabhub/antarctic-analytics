@@ -1,0 +1,8 @@
+{
+  "name": "aemet-antarctica-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "../scripts/build_frontend.sh"
+  }
+}

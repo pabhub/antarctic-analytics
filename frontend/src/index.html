@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AEMET Antarctica Analytics</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="hero glass">
+        <div>
+          <h1>AEMET Antarctica Analytics</h1>
+          <p>Mission-ready dashboard for wind and weather exploration with map overlays, timeline playback, and high-clarity charts.</p>
+        </div>
+        <div class="hero-badge">Antarctica · Wind Focus</div>
+      </header>
+
+      <section class="layout">
+        <aside class="card controls-panel">
+          <h2 class="panel-title">Query Controls</h2>
+
+          <div class="quick-range">
+            <span class="quick-label">Quick ranges:</span>
+            <button type="button" class="range-btn" data-range="6h">Last 6h</button>
+            <button type="button" class="range-btn" data-range="24h">Last 24h</button>
+            <button type="button" class="range-btn" data-range="7d">Last 7d</button>
+          </div>
+
+          <form id="query-form">
+            <label>Start datetime<input id="start" type="datetime-local" step="1" /></label>
+            <label>End datetime<input id="end" type="datetime-local" step="1" /></label>
+            <label>Input timezone (API <code>location</code>)
+              <select id="location">
+                <option value="UTC">UTC</option>
+                <option value="Europe/Madrid">Europe/Madrid</option>
+                <option value="Europe/Berlin">Europe/Berlin</option>
+                <option value="America/Santiago">America/Santiago</option>
+              </select>
+            </label>
+            <label>Station
+              <select id="station">
+                <option value="gabriel-de-castilla">Meteo Station Gabriel de Castilla</option>
+                <option value="juan-carlos-i">Meteo Station Juan Carlos I</option>
+              </select>
+            </label>
+            <label>Aggregation
+              <select id="aggregation">
+                <option value="none">None (10-minute source granularity)</option>
+                <option value="hourly">Hourly</option>
+                <option value="daily">Daily</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            <label>Display timezone (UI only)
+              <select id="display-timezone">
+                <option value="Europe/Madrid">Europe/Madrid</option>
+                <option value="UTC">UTC</option>
+                <option value="browser">Browser local timezone</option>
+              </select>
+            </label>
+
+            <fieldset>
+              <legend>Data types</legend>
+              <div class="checks">
+                <label><input type="checkbox" name="types" value="temperature">Temperature</label>
+                <label><input type="checkbox" name="types" value="pressure">Pressure</label>
+                <label><input type="checkbox" name="types" value="speed">Speed</label>
+                <label><input type="checkbox" name="types" value="direction">Direction</label>
+              </div>
+            </fieldset>
+            <button type="submit" id="submit-btn">Run query</button>
+          </form>
+
+          <div class="export-actions">
+            <button type="button" id="export-csv" class="secondary" disabled>Export CSV</button>
+            <button type="button" id="export-parquet" class="secondary" disabled>Export Parquet</button>
+          </div>
+
+          <p class="hint">The UI sends API-formatted datetimes automatically (`YYYY-MM-DDTHH:MM:SS`).</p>
+          <p id="status">No data loaded yet.</p>
+          <div id="summary-chips"></div>
+        </aside>
+
+        <section class="content-stack">
+          <section class="metrics-grid" id="metrics-grid">
+            <article class="metric-card"><h4>Rows</h4><p id="metric-rows">—</p></article>
+            <article class="metric-card"><h4>Avg Speed</h4><p id="metric-speed">—</p></article>
+            <article class="metric-card"><h4>Peak Gust Proxy</h4><p id="metric-peak">—</p></article>
+            <article class="metric-card"><h4>Avg Temperature</h4><p id="metric-temp">—</p></article>
+          </section>
+
+          <section class="card content-panel">
+            <div class="panel-header-row">
+              <h2 class="panel-title">Map Overlay + Wind Flow Timeline</h2>
+              <span class="panel-note">Map vectors show flow direction (downwind) scaled by speed.</span>
+            </div>
+            <div class="timeline-controls">
+              <button id="play-timeline" type="button">Play</button>
+              <input id="timeline" type="range" min="0" max="0" value="0" disabled />
+              <span id="timeline-label">No frames</span>
+            </div>
+            <div id="empty-state" class="empty-state hidden">Run a query to load weather records and map overlays.</div>
+            <div id="map-canvas"></div>
+
+            <div id="chart-empty" class="empty-state small hidden">No chart data for the selected window.</div>
+            <div class="charts-grid" id="charts-grid">
+              <div class="chart-card">
+                <div class="chart-title-wrap">
+                  <h3 class="panel-title">Wind Speed Trend</h3>
+                  <span class="chart-subtitle">m/s over selected window</span>
+                </div>
+                <div class="chart-canvas-shell"><canvas id="speed-chart"></canvas></div>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title-wrap">
+                  <h3 class="panel-title">Temperature & Pressure Trend</h3>
+                  <span class="chart-subtitle">Dual axis: °C and hPa</span>
+                </div>
+                <div class="chart-canvas-shell"><canvas id="weather-chart"></canvas></div>
+              </div>
+            </div>
+
+            <h3 class="panel-title">Average wind in selected window</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Station</th><th>Avg Speed (m/s)</th><th>Avg Direction (°)</th><th>Samples</th></tr></thead>
+                <tbody id="avg-output"></tbody>
+              </table>
+            </div>
+
+            <h3 class="panel-title">Raw/aggregated points (human-readable datetime)</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Station</th><th>Datetime</th><th>Temperature</th><th>Pressure</th><th>Speed</th><th>Direction (°)</th><th>Latitude</th><th>Longitude</th><th>Altitude (m)</th></tr></thead>
+                <tbody id="output"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <div id="loading-overlay" class="loading-overlay hidden">Loading weather data…</div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
