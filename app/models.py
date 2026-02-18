@@ -63,3 +63,14 @@ class AvailableDataResponse(BaseModel):
     source_endpoint: str
     currently_exposed_fields: dict[str, str]
     additional_fields_often_available: dict[str, str]
+
+
+class LatestAvailabilityResponse(BaseModel):
+    station: Station
+    checked_at_utc: datetime
+    newest_observation_utc: datetime | None = None
+    suggested_start_utc: datetime | None = None
+    suggested_end_utc: datetime | None = None
+    probe_window_hours: int | None = None
+    suggested_aggregation: TimeAggregation | None = None
+    note: str

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from app.aemet_client import AemetClient
 from app.database import SQLiteRepository
-from app.models import MeasurementType, OutputMeasurement, SourceMeasurement, Station, TimeAggregation
+from app.models import LatestAvailabilityResponse, MeasurementType, OutputMeasurement, SourceMeasurement, Station, TimeAggregation
 from app.settings import Settings
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
@@ -60,6 +60,38 @@ class AntartidaService:
         rows = self.repository.get_measurements(station_id, start_utc, end_utc)
         transformed = self._aggregate(rows, aggregation)
         return [self._to_output(row, selected_types) for row in transformed]
+
+    def get_latest_availability(self, station: Station) -> LatestAvailabilityResponse:
+        station_id = self.station_id_for(station)
+        checked_at_utc = datetime.now(UTC)
+        probe_windows_hours = [6, 24, 72, 168, 336, 720, 2160, 4320, 8760]
+
+        for hours in probe_windows_hours:
+            start_utc = checked_at_utc - timedelta(hours=hours)
+            rows = self.aemet_client.fetch_station_data(start_utc, checked_at_utc, station_id)
+            if not rows:
+                continue
+
+            newest = max(row.measured_at_utc for row in rows)
+            suggested_end = newest
+            suggested_start = max(start_utc, newest - timedelta(hours=24))
+            suggested_aggregation = TimeAggregation.NONE if (suggested_end - suggested_start) <= timedelta(days=2) else TimeAggregation.HOURLY
+            return LatestAvailabilityResponse(
+                station=station,
+                checked_at_utc=checked_at_utc,
+                newest_observation_utc=newest,
+                suggested_start_utc=suggested_start,
+                suggested_end_utc=suggested_end,
+                probe_window_hours=hours,
+                suggested_aggregation=suggested_aggregation,
+                note="Suggested window targets latest available observations from AEMET.",
+            )
+
+        return LatestAvailabilityResponse(
+            station=station,
+            checked_at_utc=checked_at_utc,
+            note="No observations were found in the last 365 days for this station.",
+        )
 
     def _aggregate(self, rows: list[SourceMeasurement], aggregation: TimeAggregation) -> list[SourceMeasurement]:
         if aggregation == TimeAggregation.NONE:

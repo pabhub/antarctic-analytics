@@ -148,6 +148,25 @@ button:hover { filter: brightness(1.03); transform: translateY(-1px); }
   color: #0f766e;
   border: 1px solid #99f6e4;
 }
+.availability-card {
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.availability-title {
+  font-size: .82rem;
+  font-weight: 800;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.availability-message {
+  margin: 6px 0 8px;
+  color: #475569;
+  font-size: .86rem;
+}
 .export-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 button.secondary {
   background: #f8fafc;

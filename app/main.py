@@ -15,6 +15,7 @@ from app.aemet_client import AemetClient
 from app.database import SQLiteRepository
 from app.models import (
     AvailableDataResponse,
+    LatestAvailabilityResponse,
     MeasurementResponse,
     MeasurementType,
     OutputMeasurement,
@@ -28,6 +29,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AEMET Antarctica API", version="1.0.0")
 
@@ -88,6 +92,22 @@ def available_data() -> AvailableDataResponse:
     )
 
 
+@app.get("/api/metadata/latest-availability/station/{identificacion}", response_model=LatestAvailabilityResponse)
+def latest_availability(
+    identificacion: Station,
+    service: AntartidaService = Depends(get_service),
+) -> LatestAvailabilityResponse:
+    try:
+        return service.get_latest_availability(identificacion)
+    except RuntimeError as exc:
+        logger.warning(
+            "Upstream AEMET failure on availability endpoint: station=%s detail=%s",
+            identificacion.value,
+            str(exc),
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.get(
     "/api/antartida/datos/fechaini/{fechaIniStr}/fechafin/{fechaFinStr}/estacion/{identificacion}",
     response_model=MeasurementResponse,
@@ -115,13 +135,23 @@ def antartida_data(
     if start >= end:
         raise HTTPException(status_code=400, detail="Start datetime must be before end datetime")
 
-    data = service.get_data(
-        station=identificacion,
-        start_local=start,
-        end_local=end,
-        aggregation=aggregation,
-        selected_types=types,
-    )
+    try:
+        data = service.get_data(
+            station=identificacion,
+            start_local=start,
+            end_local=end,
+            aggregation=aggregation,
+            selected_types=types,
+        )
+    except RuntimeError as exc:
+        logger.warning(
+            "Upstream AEMET failure on data endpoint: station=%s start=%s end=%s detail=%s",
+            identificacion.value,
+            start.isoformat(),
+            end.isoformat(),
+            str(exc),
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return MeasurementResponse(
         station=identificacion,
@@ -159,13 +189,24 @@ def export_antartida_data(
     if start >= end:
         raise HTTPException(status_code=400, detail="Start datetime must be before end datetime")
 
-    data = service.get_data(
-        station=identificacion,
-        start_local=start,
-        end_local=end,
-        aggregation=aggregation,
-        selected_types=types,
-    )
+    try:
+        data = service.get_data(
+            station=identificacion,
+            start_local=start,
+            end_local=end,
+            aggregation=aggregation,
+            selected_types=types,
+        )
+    except RuntimeError as exc:
+        logger.warning(
+            "Upstream AEMET failure on export endpoint: station=%s start=%s end=%s format=%s detail=%s",
+            identificacion.value,
+            start.isoformat(),
+            end.isoformat(),
+            format,
+            str(exc),
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     filename_base = f"{identificacion.value}_{start.strftime('%Y%m%dT%H%M%S')}_{end.strftime('%Y%m%dT%H%M%S')}_{aggregation.value}"
 
     if format == "csv":

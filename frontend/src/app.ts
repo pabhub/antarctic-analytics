@@ -13,6 +13,17 @@ type DataRow = {
   altitude?: number | null;
 };
 
+type LatestAvailability = {
+  station: string;
+  checked_at_utc: string;
+  newest_observation_utc?: string | null;
+  suggested_start_utc?: string | null;
+  suggested_end_utc?: string | null;
+  probe_window_hours?: number | null;
+  suggested_aggregation?: string | null;
+  note: string;
+};
+
 const form = document.getElementById('query-form') as HTMLFormElement;
 const output = document.getElementById('output') as HTMLTableSectionElement;
 const statusEl = document.getElementById('status') as HTMLParagraphElement;
@@ -25,6 +36,8 @@ const speedChartCanvas = document.getElementById('speed-chart') as HTMLCanvasEle
 const weatherChartCanvas = document.getElementById('weather-chart') as HTMLCanvasElement;
 const startInput = document.getElementById('start') as HTMLInputElement;
 const endInput = document.getElementById('end') as HTMLInputElement;
+const stationSelect = document.getElementById('station') as HTMLSelectElement;
+const aggregationSelect = document.getElementById('aggregation') as HTMLSelectElement;
 const inputTimezoneValue = document.getElementById('input-timezone-value') as HTMLSpanElement;
 const displayTimezoneSelect = document.getElementById('display-timezone') as HTMLSelectElement;
 const rangeButtons = Array.from(document.querySelectorAll('.range-btn')) as HTMLButtonElement[];
@@ -39,6 +52,8 @@ const exportParquetBtn = document.getElementById('export-parquet') as HTMLButton
 const emptyState = document.getElementById('empty-state') as HTMLDivElement;
 const chartEmpty = document.getElementById('chart-empty') as HTMLDivElement;
 const chartsGrid = document.getElementById('charts-grid') as HTMLDivElement;
+const availabilityMessage = document.getElementById('availability-message') as HTMLParagraphElement;
+const applySuggestedBtn = document.getElementById('apply-suggested') as HTMLButtonElement;
 
 const map = L.map('map-canvas', { zoomControl: true }).setView([-62.0, -58.5], 4);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -58,6 +73,9 @@ let activeRows: DataRow[] = [];
 let lastQueryBasePath = '';
 let lastQueryParams = '';
 const inputTimezoneStorageKey = 'aemet.input_timezone';
+let suggestedStartLocal = '';
+let suggestedEndLocal = '';
+let suggestedAggregation = '';
 
 function browserTimeZone(): string {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -95,6 +113,21 @@ function setLoading(loading: boolean): void {
 function toDateTimeLocal(date: Date): string {
   const pad = (v: number) => String(v).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function toDateTimeLocalInZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const read = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+  return `${read('year')}-${read('month')}-${read('day')}T${read('hour')}:${read('minute')}:${read('second')}`;
 }
 
 function setDefaultRange(): void {
@@ -483,6 +516,42 @@ function renderTable(data: DataRow[]): void {
   }
 }
 
+async function fetchLatestAvailability(): Promise<void> {
+  const station = stationSelect.value;
+  availabilityMessage.textContent = 'Checking latest data from AEMET…';
+  applySuggestedBtn.disabled = true;
+  suggestedStartLocal = '';
+  suggestedEndLocal = '';
+  suggestedAggregation = '';
+
+  try {
+    const response = await fetch(`/api/metadata/latest-availability/station/${station}`);
+    const json = await response.json();
+    if (!response.ok) {
+      availabilityMessage.textContent = json.detail ?? 'Unable to check latest availability right now.';
+      return;
+    }
+
+    const info = json as LatestAvailability;
+    if (info.suggested_start_utc && info.suggested_end_utc && info.newest_observation_utc) {
+      const inputZone = configuredInputTimeZone();
+      const newest = formatDateTime(info.newest_observation_utc);
+      const start = formatDateTime(info.suggested_start_utc);
+      const end = formatDateTime(info.suggested_end_utc);
+      suggestedStartLocal = toDateTimeLocalInZone(new Date(info.suggested_start_utc), inputZone);
+      suggestedEndLocal = toDateTimeLocalInZone(new Date(info.suggested_end_utc), inputZone);
+      suggestedAggregation = info.suggested_aggregation ?? 'none';
+      applySuggestedBtn.disabled = false;
+      availabilityMessage.textContent = `Newest observation: ${newest}. Suggested window: ${start} → ${end}.`;
+      return;
+    }
+
+    availabilityMessage.textContent = info.note || 'No recent observations found for this station.';
+  } catch {
+    availabilityMessage.textContent = 'Unable to check latest availability due to network error.';
+  }
+}
+
 async function runQuery(): Promise<void> {
   avgOutput.innerHTML = '';
   statusEl.textContent = 'Loading...';
@@ -491,9 +560,9 @@ async function runQuery(): Promise<void> {
 
   const start = toApiDateTime(startInput.value);
   const end = toApiDateTime(endInput.value);
-  const station = (document.getElementById('station') as HTMLSelectElement).value;
+  const station = stationSelect.value;
   const location = configuredInputTimeZone();
-  const aggregation = (document.getElementById('aggregation') as HTMLSelectElement).value;
+  const aggregation = aggregationSelect.value;
 
   if (!start || !end) {
     statusEl.textContent = 'Please choose valid start/end datetimes.';
@@ -561,6 +630,10 @@ rangeButtons.forEach((btn) => {
   btn.addEventListener('click', () => applyQuickRange(btn.dataset.range || '6h'));
 });
 
+stationSelect.addEventListener('change', async () => {
+  await fetchLatestAvailability();
+});
+
 timeline.addEventListener('input', () => {
   const idx = Number(timeline.value);
   if (timelineFrames[idx]) drawFrame(timelineFrames[idx]);
@@ -596,7 +669,10 @@ setEmptyState(true, 'Run a query to load weather records and map overlays.');
 playButton.disabled = true;
 
 window.addEventListener('storage', (event) => {
-  if (event.key === inputTimezoneStorageKey) refreshInputTimeZoneLabel();
+  if (event.key === inputTimezoneStorageKey) {
+    refreshInputTimeZoneLabel();
+    void fetchLatestAvailability();
+  }
 });
 
 exportCsvBtn.addEventListener('click', async () => {
@@ -606,3 +682,13 @@ exportCsvBtn.addEventListener('click', async () => {
 exportParquetBtn.addEventListener('click', async () => {
   await downloadExport('parquet');
 });
+
+applySuggestedBtn.addEventListener('click', () => {
+  if (!suggestedStartLocal || !suggestedEndLocal) return;
+  startInput.value = suggestedStartLocal;
+  endInput.value = suggestedEndLocal;
+  if (suggestedAggregation) aggregationSelect.value = suggestedAggregation;
+  statusEl.textContent = 'Applied suggested start/end range based on latest available observation.';
+});
+
+void fetchLatestAvailability();

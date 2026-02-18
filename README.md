@@ -70,8 +70,11 @@ For wind-farm feasibility studies, AEMET station payloads often include addition
 This project now exposes a helper endpoint to document what is currently returned and what can be added next. It also persists station coordinates in SQLite for map-based analytics:
 
 - `GET /api/metadata/available-data`
+- `GET /api/metadata/latest-availability/station/{identificacion}`
 
 > Note: exact field availability can vary by station and period in the source API.
+
+If the upstream AEMET API reports no observations for the selected time window, the dashboard can now probe recent history and suggest a start/end datetime window based on the newest available observation.
 
 ## Environment variables
 

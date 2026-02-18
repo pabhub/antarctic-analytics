@@ -35,6 +35,17 @@ class FakeClient:
         return self.rows
 
 
+class FakeLatestClient:
+    def __init__(self, by_hours):
+        self.by_hours = by_hours
+        self.calls = 0
+
+    def fetch_station_data(self, start_utc, end_utc, station_id):
+        self.calls += 1
+        window_hours = int(round((end_utc - start_utc).total_seconds() / 3600))
+        return self.by_hours.get(window_hours, [])
+
+
 def build_service(rows, has_fresh_cache=False):
     settings = Settings(
         aemet_api_key="dummy",
@@ -182,3 +193,59 @@ def test_cache_miss_fetches_remote_and_updates_db():
 
     assert client.calls == 1
     assert repo.upsert_calls == 1
+
+
+def test_latest_availability_returns_suggested_window_when_data_found():
+    newest = datetime.now(UTC).replace(microsecond=0)
+    rows = [
+        SourceMeasurement(
+            station_name="X",
+            measured_at_utc=newest,
+            temperature_c=1.0,
+        )
+    ]
+    settings = Settings(
+        aemet_api_key="dummy",
+        database_url="sqlite:///:memory:",
+        request_timeout_seconds=1.0,
+        gabriel_station_id="1",
+        juan_station_id="2",
+        cache_freshness_seconds=3600,
+    )
+    repo = FakeRepo([], has_fresh_cache=False)
+    client = FakeLatestClient({24: rows})
+    service = AntartidaService(settings, repo, client)
+
+    out = service.get_latest_availability(Station.GABRIEL_DE_CASTILLA)
+
+    assert out.station == Station.GABRIEL_DE_CASTILLA
+    assert out.newest_observation_utc == newest
+    assert out.suggested_end_utc == newest
+    assert out.suggested_start_utc is not None
+    assert out.suggested_end_utc >= out.suggested_start_utc
+    assert out.suggested_aggregation == TimeAggregation.NONE
+    assert out.probe_window_hours == 24
+
+
+def test_latest_availability_no_data_returns_note():
+    settings = Settings(
+        aemet_api_key="dummy",
+        database_url="sqlite:///:memory:",
+        request_timeout_seconds=1.0,
+        gabriel_station_id="1",
+        juan_station_id="2",
+        cache_freshness_seconds=3600,
+    )
+    repo = FakeRepo([], has_fresh_cache=False)
+    client = FakeLatestClient({})
+    service = AntartidaService(settings, repo, client)
+
+    out = service.get_latest_availability(Station.JUAN_CARLOS_I)
+
+    assert out.station == Station.JUAN_CARLOS_I
+    assert out.newest_observation_utc is None
+    assert out.suggested_start_utc is None
+    assert out.suggested_end_utc is None
+    assert out.suggested_aggregation is None
+    assert out.probe_window_hours is None
+    assert "No observations" in out.note

@@ -37,6 +37,12 @@
             <button type="button" class="range-btn" data-range="7d">Last 7d</button>
           </div>
 
+          <div class="availability-card">
+            <div class="availability-title">Latest data availability</div>
+            <p id="availability-message" class="availability-message">Checking latest data from AEMET…</p>
+            <button type="button" id="apply-suggested" class="secondary" disabled>Use suggested start/end</button>
+          </div>
+
           <form id="query-form">
             <label>Start datetime<input id="start" type="datetime-local" step="1" /></label>
             <label>End datetime<input id="end" type="datetime-local" step="1" /></label>

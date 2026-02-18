@@ -35,14 +35,47 @@ class AemetClient:
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
             meta_response = client.get(endpoint, params={"api_key": self.api_key})
-            meta_response.raise_for_status()
-            payload = meta_response.json()
-            data_url = payload["datos"]
+            try:
+                meta_response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(f"AEMET metadata request failed with HTTP {exc.response.status_code}") from exc
+
+            try:
+                payload = meta_response.json()
+            except ValueError as exc:
+                raise RuntimeError("AEMET metadata response is not valid JSON") from exc
+
+            if not isinstance(payload, dict):
+                raise RuntimeError("AEMET metadata response has unexpected shape")
+
+            data_url = payload.get("datos")
+            if not data_url:
+                estado = payload.get("estado")
+                descripcion = payload.get("descripcion")
+                if str(estado) == "404" and isinstance(descripcion, str) and "no hay datos" in descripcion.lower():
+                    logger.info("AEMET returned no data for requested criteria (station=%s)", station_id)
+                    return []
+                detail_parts = ["AEMET response missing 'datos' URL"]
+                if estado is not None:
+                    detail_parts.append(f"estado={estado}")
+                if descripcion:
+                    detail_parts.append(f"descripcion={descripcion}")
+                raise RuntimeError(". ".join(detail_parts))
 
             logger.info("Downloading AEMET data from temporary URL")
             data_response = client.get(data_url)
-            data_response.raise_for_status()
-            raw_items = data_response.json()
+            try:
+                data_response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(f"AEMET data download failed with HTTP {exc.response.status_code}") from exc
+
+            try:
+                raw_items = data_response.json()
+            except ValueError as exc:
+                raise RuntimeError("AEMET data payload is not valid JSON") from exc
+
+            if not isinstance(raw_items, list):
+                raise RuntimeError("AEMET data payload has unexpected shape")
 
         return [self._map_row(row) for row in raw_items]
 
