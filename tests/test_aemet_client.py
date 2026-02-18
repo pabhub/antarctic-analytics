@@ -61,3 +61,30 @@ def test_fetch_station_data_returns_empty_for_aemet_no_data_404(monkeypatch):
         station_id="89064",
     )
     assert out == []
+
+
+def test_fetch_station_inventory_parses_station_rows(monkeypatch):
+    responses = [
+        FakeResponse({"estado": 200, "datos": "https://example.test/data.json"}),
+        FakeResponse(
+            [
+                {
+                    "indicativo": "89064",
+                    "nombre": "GABRIEL DE CASTILLA",
+                    "provincia": "ANTARTIDA",
+                    "latitud": "-62.97",
+                    "longitud": "-60.68",
+                    "altitud": "14",
+                }
+            ]
+        ),
+    ]
+    monkeypatch.setattr("app.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
+
+    client = AemetClient(api_key="ok-key")
+    out = client.fetch_station_inventory()
+
+    assert len(out) == 1
+    assert out[0].station_id == "89064"
+    assert out[0].station_name == "GABRIEL DE CASTILLA"
+    assert out[0].province == "ANTARTIDA"

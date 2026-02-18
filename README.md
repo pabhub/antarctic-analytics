@@ -71,6 +71,7 @@ This project now exposes a helper endpoint to document what is currently returne
 
 - `GET /api/metadata/available-data`
 - `GET /api/metadata/latest-availability/station/{identificacion}`
+- `GET /api/metadata/stations` (AEMET station catalog cached in DB)
 
 > Note: exact field availability can vary by station and period in the source API.
 
@@ -84,6 +85,7 @@ If the upstream AEMET API reports no observations for the selected time window, 
 - `AEMET_GABRIEL_STATION_ID` (default: `89064`)
 - `AEMET_JUAN_STATION_ID` (default: `89070`)
 - `CACHE_FRESHNESS_SECONDS` (default: `10800`, i.e. 3 hours)
+- `STATION_CATALOG_FRESHNESS_SECONDS` (default: `604800`, i.e. 7 days)
 
 ## Get AEMET API key
 

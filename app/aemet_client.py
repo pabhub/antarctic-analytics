@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.models import SourceMeasurement
+from app.models import SourceMeasurement, StationCatalogItem
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,48 @@ class AemetClient:
         )
         logger.info("Requesting AEMET metadata URL for station %s", station_id)
 
+        raw_items = self._request_data_items(endpoint, allow_no_data=True, no_data_log_context=f"station={station_id}")
+        return [self._map_row(row) for row in raw_items]
+
+    def fetch_station_inventory(self) -> list[StationCatalogItem]:
+        if not self.api_key:
+            raise RuntimeError("AEMET_API_KEY environment variable is required")
+
+        endpoint = f"{self.BASE_URL}/valores/climatologicos/inventarioestaciones/todasestaciones"
+        logger.info("Requesting AEMET station inventory metadata URL")
+        raw_items = self._request_data_items(endpoint, allow_no_data=False)
+        stations: list[StationCatalogItem] = []
+        for row in raw_items:
+            station_id = str(
+                row.get("indicativo")
+                or row.get("idema")
+                or row.get("indicatif")
+                or row.get("estacion")
+                or ""
+            ).strip()
+            if not station_id:
+                continue
+            station_name = str(row.get("nombre") or row.get("name") or station_id).strip()
+            if not station_name:
+                station_name = station_id
+            stations.append(
+                StationCatalogItem(
+                    stationId=station_id,
+                    stationName=station_name,
+                    province=(row.get("provincia") or row.get("provincia_nombre") or None),
+                    latitude=self._to_float(row.get("latitud") or row.get("lat") or row.get("latitude")),
+                    longitude=self._to_float(row.get("longitud") or row.get("lon") or row.get("longitude")),
+                    altitude=self._to_float(row.get("altitud") or row.get("alt") or row.get("altitude")),
+                )
+            )
+        return stations
+
+    def _request_data_items(
+        self,
+        endpoint: str,
+        allow_no_data: bool,
+        no_data_log_context: str | None = None,
+    ) -> list[dict[str, Any]]:
         with httpx.Client(timeout=self.timeout_seconds) as client:
             meta_response = client.get(endpoint, params={"api_key": self.api_key})
             try:
@@ -52,8 +94,9 @@ class AemetClient:
             if not data_url:
                 estado = payload.get("estado")
                 descripcion = payload.get("descripcion")
-                if str(estado) == "404" and isinstance(descripcion, str) and "no hay datos" in descripcion.lower():
-                    logger.info("AEMET returned no data for requested criteria (station=%s)", station_id)
+                if allow_no_data and str(estado) == "404" and isinstance(descripcion, str) and "no hay datos" in descripcion.lower():
+                    context = f" ({no_data_log_context})" if no_data_log_context else ""
+                    logger.info("AEMET returned no data for requested criteria%s", context)
                     return []
                 detail_parts = ["AEMET response missing 'datos' URL"]
                 if estado is not None:
@@ -77,7 +120,7 @@ class AemetClient:
             if not isinstance(raw_items, list):
                 raise RuntimeError("AEMET data payload has unexpected shape")
 
-        return [self._map_row(row) for row in raw_items]
+        return raw_items
 
     @staticmethod
     def _to_float(value: Any) -> float | None:

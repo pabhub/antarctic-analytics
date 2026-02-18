@@ -43,6 +43,20 @@
             <button type="button" id="apply-suggested" class="secondary" disabled>Use suggested start/end</button>
           </div>
 
+          <div class="availability-card">
+            <div class="availability-title">Station catalog (searchable)</div>
+            <input id="station-search" type="text" placeholder="Search by name, id, province..." />
+            <p id="station-catalog-meta" class="availability-message">Loading station catalog…</p>
+            <div class="station-catalog-wrap">
+              <table class="station-catalog-table">
+                <thead>
+                  <tr><th>ID</th><th>Name</th><th>Province</th><th>Action</th></tr>
+                </thead>
+                <tbody id="station-catalog-body"></tbody>
+              </table>
+            </div>
+          </div>
+
           <form id="query-form">
             <label>Start datetime<input id="start" type="datetime-local" step="1" /></label>
             <label>End datetime<input id="end" type="datetime-local" step="1" /></label>
@@ -142,7 +156,7 @@
               </table>
             </div>
 
-            <h3 class="panel-title">Raw/aggregated points (human-readable datetime)</h3>
+            <h3 class="panel-title">Raw/aggregated points</h3>
             <div class="table-wrap">
               <table>
                 <thead><tr><th>Station</th><th>Datetime</th><th>Temperature</th><th>Pressure</th><th>Speed</th><th>Direction (°)</th><th>Latitude</th><th>Longitude</th><th>Altitude (m)</th></tr></thead>

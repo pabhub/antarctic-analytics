@@ -11,6 +11,8 @@ const speedChartCanvas = document.getElementById('speed-chart');
 const weatherChartCanvas = document.getElementById('weather-chart');
 const startInput = document.getElementById('start');
 const endInput = document.getElementById('end');
+const stationSelect = document.getElementById('station');
+const aggregationSelect = document.getElementById('aggregation');
 const inputTimezoneValue = document.getElementById('input-timezone-value');
 const displayTimezoneSelect = document.getElementById('display-timezone');
 const rangeButtons = Array.from(document.querySelectorAll('.range-btn'));
@@ -25,6 +27,11 @@ const exportParquetBtn = document.getElementById('export-parquet');
 const emptyState = document.getElementById('empty-state');
 const chartEmpty = document.getElementById('chart-empty');
 const chartsGrid = document.getElementById('charts-grid');
+const availabilityMessage = document.getElementById('availability-message');
+const applySuggestedBtn = document.getElementById('apply-suggested');
+const stationSearchInput = document.getElementById('station-search');
+const stationCatalogMeta = document.getElementById('station-catalog-meta');
+const stationCatalogBody = document.getElementById('station-catalog-body');
 const map = L.map('map-canvas', { zoomControl: true }).setView([-62.0, -58.5], 4);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 18,
@@ -41,6 +48,10 @@ let activeRows = [];
 let lastQueryBasePath = '';
 let lastQueryParams = '';
 const inputTimezoneStorageKey = 'aemet.input_timezone';
+let suggestedStartLocal = '';
+let suggestedEndLocal = '';
+let suggestedAggregation = '';
+let stationCatalogRows = [];
 function browserTimeZone() {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     return zone && zone.trim() ? zone : 'UTC';
@@ -74,6 +85,35 @@ function setLoading(loading) {
 function toDateTimeLocal(date) {
     const pad = (v) => String(v).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+function toDateTimeLocalInZone(date, timeZone) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+    }).formatToParts(date);
+    const read = (type) => parts.find((p) => p.type === type)?.value ?? '00';
+    return `${read('year')}-${read('month')}-${read('day')}T${read('hour')}:${read('minute')}:${read('second')}`;
+}
+function normalizeText(value) {
+    return value
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .toLowerCase()
+        .trim();
+}
+function mapCatalogItemToQueryStation(item) {
+    const name = normalizeText(item.stationName);
+    if (name.includes('gabriel de castilla'))
+        return 'gabriel-de-castilla';
+    if (name.includes('juan carlos i'))
+        return 'juan-carlos-i';
+    return null;
 }
 function setDefaultRange() {
     const end = new Date();
@@ -423,6 +463,93 @@ function renderTable(data) {
         output.appendChild(tr);
     }
 }
+function renderStationCatalog(filter) {
+    stationCatalogBody.innerHTML = '';
+    const q = normalizeText(filter);
+    const rows = stationCatalogRows
+        .filter((row) => {
+        if (!q)
+            return true;
+        const bag = normalizeText(`${row.stationId} ${row.stationName} ${row.province ?? ''}`);
+        return bag.includes(q);
+    })
+        .slice(0, 200);
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="4">No stations match this search.</td>';
+        stationCatalogBody.appendChild(tr);
+        return;
+    }
+    for (const row of rows) {
+        const tr = document.createElement('tr');
+        const queryStation = mapCatalogItemToQueryStation(row);
+        if (queryStation) {
+            tr.innerHTML = `<td>${row.stationId}</td><td>${row.stationName}</td><td>${row.province ?? ''}</td><td><button type="button" class="tiny-btn secondary" data-query-station="${queryStation}">Use in query</button></td>`;
+        }
+        else {
+            tr.innerHTML = `<td>${row.stationId}</td><td>${row.stationName}</td><td>${row.province ?? ''}</td><td><span class="tag-muted">Catalog only</span></td>`;
+        }
+        stationCatalogBody.appendChild(tr);
+    }
+}
+async function fetchStationCatalog() {
+    stationCatalogMeta.textContent = 'Loading station catalog…';
+    try {
+        const response = await fetch('/api/metadata/stations');
+        const json = await response.json();
+        if (!response.ok) {
+            stationCatalogMeta.textContent = json.detail ?? 'Unable to load station catalog.';
+            stationCatalogRows = [];
+            renderStationCatalog(stationSearchInput.value);
+            return;
+        }
+        const payload = json;
+        stationCatalogRows = payload.data ?? [];
+        const checkedAt = formatDateTime(payload.checked_at_utc);
+        const cachedUntil = formatDateTime(payload.cached_until_utc);
+        const cacheLabel = payload.cache_hit ? 'cache' : 'upstream refresh';
+        stationCatalogMeta.textContent = `Loaded ${stationCatalogRows.length} stations (${cacheLabel}). Checked: ${checkedAt}. Cache valid until: ${cachedUntil}.`;
+        renderStationCatalog(stationSearchInput.value);
+    }
+    catch {
+        stationCatalogRows = [];
+        stationCatalogMeta.textContent = 'Unable to load station catalog due to network error.';
+        renderStationCatalog(stationSearchInput.value);
+    }
+}
+async function fetchLatestAvailability() {
+    const station = stationSelect.value;
+    availabilityMessage.textContent = 'Checking latest data from AEMET…';
+    applySuggestedBtn.disabled = true;
+    suggestedStartLocal = '';
+    suggestedEndLocal = '';
+    suggestedAggregation = '';
+    try {
+        const response = await fetch(`/api/metadata/latest-availability/station/${station}`);
+        const json = await response.json();
+        if (!response.ok) {
+            availabilityMessage.textContent = json.detail ?? 'Unable to check latest availability right now.';
+            return;
+        }
+        const info = json;
+        if (info.suggested_start_utc && info.suggested_end_utc && info.newest_observation_utc) {
+            const inputZone = configuredInputTimeZone();
+            const newest = formatDateTime(info.newest_observation_utc);
+            const start = formatDateTime(info.suggested_start_utc);
+            const end = formatDateTime(info.suggested_end_utc);
+            suggestedStartLocal = toDateTimeLocalInZone(new Date(info.suggested_start_utc), inputZone);
+            suggestedEndLocal = toDateTimeLocalInZone(new Date(info.suggested_end_utc), inputZone);
+            suggestedAggregation = info.suggested_aggregation ?? 'none';
+            applySuggestedBtn.disabled = false;
+            availabilityMessage.textContent = `Newest observation: ${newest}. Suggested window: ${start} → ${end}.`;
+            return;
+        }
+        availabilityMessage.textContent = info.note || 'No recent observations found for this station.';
+    }
+    catch {
+        availabilityMessage.textContent = 'Unable to check latest availability due to network error.';
+    }
+}
 async function runQuery() {
     avgOutput.innerHTML = '';
     statusEl.textContent = 'Loading...';
@@ -430,9 +557,9 @@ async function runQuery() {
     setLoading(true);
     const start = toApiDateTime(startInput.value);
     const end = toApiDateTime(endInput.value);
-    const station = document.getElementById('station').value;
+    const station = stationSelect.value;
     const location = configuredInputTimeZone();
-    const aggregation = document.getElementById('aggregation').value;
+    const aggregation = aggregationSelect.value;
     if (!start || !end) {
         statusEl.textContent = 'Please choose valid start/end datetimes.';
         setLoading(false);
@@ -496,6 +623,24 @@ async function runQuery() {
 rangeButtons.forEach((btn) => {
     btn.addEventListener('click', () => applyQuickRange(btn.dataset.range || '6h'));
 });
+stationSelect.addEventListener('change', async () => {
+    await fetchLatestAvailability();
+});
+stationSearchInput.addEventListener('input', () => {
+    renderStationCatalog(stationSearchInput.value);
+});
+stationCatalogBody.addEventListener('click', async (event) => {
+    const target = event.target;
+    const button = target.closest('button[data-query-station]');
+    if (!button)
+        return;
+    const station = button.dataset.queryStation;
+    if (!station)
+        return;
+    stationSelect.value = station;
+    await fetchLatestAvailability();
+    statusEl.textContent = `Selected query station: ${stationSelect.options[stationSelect.selectedIndex]?.text ?? station}.`;
+});
 timeline.addEventListener('input', () => {
     const idx = Number(timeline.value);
     if (timelineFrames[idx])
@@ -531,8 +676,10 @@ renderCharts([]);
 setEmptyState(true, 'Run a query to load weather records and map overlays.');
 playButton.disabled = true;
 window.addEventListener('storage', (event) => {
-    if (event.key === inputTimezoneStorageKey)
+    if (event.key === inputTimezoneStorageKey) {
         refreshInputTimeZoneLabel();
+        void fetchLatestAvailability();
+    }
 });
 exportCsvBtn.addEventListener('click', async () => {
     await downloadExport('csv');
@@ -540,3 +687,14 @@ exportCsvBtn.addEventListener('click', async () => {
 exportParquetBtn.addEventListener('click', async () => {
     await downloadExport('parquet');
 });
+applySuggestedBtn.addEventListener('click', () => {
+    if (!suggestedStartLocal || !suggestedEndLocal)
+        return;
+    startInput.value = suggestedStartLocal;
+    endInput.value = suggestedEndLocal;
+    if (suggestedAggregation)
+        aggregationSelect.value = suggestedAggregation;
+    statusEl.textContent = 'Applied suggested start/end range based on latest available observation.';
+});
+void fetchStationCatalog();
+void fetchLatestAvailability();

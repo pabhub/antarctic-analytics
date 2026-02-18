@@ -9,7 +9,15 @@ from zoneinfo import ZoneInfo
 
 from app.aemet_client import AemetClient
 from app.database import SQLiteRepository
-from app.models import LatestAvailabilityResponse, MeasurementType, OutputMeasurement, SourceMeasurement, Station, TimeAggregation
+from app.models import (
+    LatestAvailabilityResponse,
+    MeasurementType,
+    OutputMeasurement,
+    SourceMeasurement,
+    Station,
+    StationCatalogResponse,
+    TimeAggregation,
+)
 from app.settings import Settings
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
@@ -91,6 +99,26 @@ class AntartidaService:
             station=station,
             checked_at_utc=checked_at_utc,
             note="No observations were found in the last 365 days for this station.",
+        )
+
+    def get_station_catalog(self, force_refresh: bool = False) -> StationCatalogResponse:
+        checked_at_utc = datetime.now(UTC)
+        min_fetched_at_utc = checked_at_utc - timedelta(seconds=self.settings.station_catalog_freshness_seconds)
+        cache_hit = (not force_refresh) and self.repository.has_fresh_station_catalog(min_fetched_at_utc)
+
+        if cache_hit:
+            rows = self.repository.get_station_catalog()
+            last_fetched_at = self.repository.get_station_catalog_last_fetched_at()
+        else:
+            rows = self.aemet_client.fetch_station_inventory()
+            last_fetched_at = self.repository.upsert_station_catalog(rows)
+
+        effective_fetched_at = last_fetched_at or checked_at_utc
+        return StationCatalogResponse(
+            checked_at_utc=checked_at_utc,
+            cached_until_utc=effective_fetched_at + timedelta(seconds=self.settings.station_catalog_freshness_seconds),
+            cache_hit=cache_hit,
+            data=rows,
         )
 
     def _aggregate(self, rows: list[SourceMeasurement], aggregation: TimeAggregation) -> list[SourceMeasurement]:

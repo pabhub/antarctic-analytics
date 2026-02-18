@@ -20,6 +20,7 @@ from app.models import (
     MeasurementType,
     OutputMeasurement,
     Station,
+    StationCatalogResponse,
     TimeAggregation,
 )
 from app.service import AntartidaService
@@ -105,6 +106,18 @@ def latest_availability(
             identificacion.value,
             str(exc),
         )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/metadata/stations", response_model=StationCatalogResponse)
+def stations_catalog(
+    force_refresh: bool = Query(False, description="Force refresh from AEMET instead of DB cache"),
+    service: AntartidaService = Depends(get_service),
+) -> StationCatalogResponse:
+    try:
+        return service.get_station_catalog(force_refresh=force_refresh)
+    except RuntimeError as exc:
+        logger.warning("Upstream AEMET failure on stations endpoint: detail=%s", str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

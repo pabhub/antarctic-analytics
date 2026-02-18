@@ -74,3 +74,19 @@ class LatestAvailabilityResponse(BaseModel):
     probe_window_hours: int | None = None
     suggested_aggregation: TimeAggregation | None = None
     note: str
+
+
+class StationCatalogItem(BaseModel):
+    station_id: str = Field(alias="stationId")
+    station_name: str = Field(alias="stationName")
+    province: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    altitude_m: float | None = Field(default=None, alias="altitude")
+
+
+class StationCatalogResponse(BaseModel):
+    checked_at_utc: datetime
+    cached_until_utc: datetime
+    cache_hit: bool
+    data: list[StationCatalogItem]

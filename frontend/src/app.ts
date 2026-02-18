@@ -24,6 +24,22 @@ type LatestAvailability = {
   note: string;
 };
 
+type StationCatalogItem = {
+  stationId: string;
+  stationName: string;
+  province?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  altitude?: number | null;
+};
+
+type StationCatalogResponse = {
+  checked_at_utc: string;
+  cached_until_utc: string;
+  cache_hit: boolean;
+  data: StationCatalogItem[];
+};
+
 const form = document.getElementById('query-form') as HTMLFormElement;
 const output = document.getElementById('output') as HTMLTableSectionElement;
 const statusEl = document.getElementById('status') as HTMLParagraphElement;
@@ -54,6 +70,9 @@ const chartEmpty = document.getElementById('chart-empty') as HTMLDivElement;
 const chartsGrid = document.getElementById('charts-grid') as HTMLDivElement;
 const availabilityMessage = document.getElementById('availability-message') as HTMLParagraphElement;
 const applySuggestedBtn = document.getElementById('apply-suggested') as HTMLButtonElement;
+const stationSearchInput = document.getElementById('station-search') as HTMLInputElement;
+const stationCatalogMeta = document.getElementById('station-catalog-meta') as HTMLParagraphElement;
+const stationCatalogBody = document.getElementById('station-catalog-body') as HTMLTableSectionElement;
 
 const map = L.map('map-canvas', { zoomControl: true }).setView([-62.0, -58.5], 4);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -76,6 +95,7 @@ const inputTimezoneStorageKey = 'aemet.input_timezone';
 let suggestedStartLocal = '';
 let suggestedEndLocal = '';
 let suggestedAggregation = '';
+let stationCatalogRows: StationCatalogItem[] = [];
 
 function browserTimeZone(): string {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -128,6 +148,21 @@ function toDateTimeLocalInZone(date: Date, timeZone: string): string {
   }).formatToParts(date);
   const read = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
   return `${read('year')}-${read('month')}-${read('day')}T${read('hour')}:${read('minute')}:${read('second')}`;
+}
+
+function normalizeText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim();
+}
+
+function mapCatalogItemToQueryStation(item: StationCatalogItem): string | null {
+  const name = normalizeText(item.stationName);
+  if (name.includes('gabriel de castilla')) return 'gabriel-de-castilla';
+  if (name.includes('juan carlos i')) return 'juan-carlos-i';
+  return null;
 }
 
 function setDefaultRange(): void {
@@ -516,6 +551,61 @@ function renderTable(data: DataRow[]): void {
   }
 }
 
+function renderStationCatalog(filter: string): void {
+  stationCatalogBody.innerHTML = '';
+  const q = normalizeText(filter);
+  const rows = stationCatalogRows
+    .filter((row) => {
+      if (!q) return true;
+      const bag = normalizeText(`${row.stationId} ${row.stationName} ${row.province ?? ''}`);
+      return bag.includes(q);
+    })
+    .slice(0, 200);
+
+  if (rows.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="4">No stations match this search.</td>';
+    stationCatalogBody.appendChild(tr);
+    return;
+  }
+
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    const queryStation = mapCatalogItemToQueryStation(row);
+    if (queryStation) {
+      tr.innerHTML = `<td>${row.stationId}</td><td>${row.stationName}</td><td>${row.province ?? ''}</td><td><button type="button" class="tiny-btn secondary" data-query-station="${queryStation}">Use in query</button></td>`;
+    } else {
+      tr.innerHTML = `<td>${row.stationId}</td><td>${row.stationName}</td><td>${row.province ?? ''}</td><td><span class="tag-muted">Catalog only</span></td>`;
+    }
+    stationCatalogBody.appendChild(tr);
+  }
+}
+
+async function fetchStationCatalog(): Promise<void> {
+  stationCatalogMeta.textContent = 'Loading station catalog…';
+  try {
+    const response = await fetch('/api/metadata/stations');
+    const json = await response.json();
+    if (!response.ok) {
+      stationCatalogMeta.textContent = json.detail ?? 'Unable to load station catalog.';
+      stationCatalogRows = [];
+      renderStationCatalog(stationSearchInput.value);
+      return;
+    }
+    const payload = json as StationCatalogResponse;
+    stationCatalogRows = payload.data ?? [];
+    const checkedAt = formatDateTime(payload.checked_at_utc);
+    const cachedUntil = formatDateTime(payload.cached_until_utc);
+    const cacheLabel = payload.cache_hit ? 'cache' : 'upstream refresh';
+    stationCatalogMeta.textContent = `Loaded ${stationCatalogRows.length} stations (${cacheLabel}). Checked: ${checkedAt}. Cache valid until: ${cachedUntil}.`;
+    renderStationCatalog(stationSearchInput.value);
+  } catch {
+    stationCatalogRows = [];
+    stationCatalogMeta.textContent = 'Unable to load station catalog due to network error.';
+    renderStationCatalog(stationSearchInput.value);
+  }
+}
+
 async function fetchLatestAvailability(): Promise<void> {
   const station = stationSelect.value;
   availabilityMessage.textContent = 'Checking latest data from AEMET…';
@@ -634,6 +724,21 @@ stationSelect.addEventListener('change', async () => {
   await fetchLatestAvailability();
 });
 
+stationSearchInput.addEventListener('input', () => {
+  renderStationCatalog(stationSearchInput.value);
+});
+
+stationCatalogBody.addEventListener('click', async (event) => {
+  const target = event.target as HTMLElement;
+  const button = target.closest('button[data-query-station]') as HTMLButtonElement | null;
+  if (!button) return;
+  const station = button.dataset.queryStation;
+  if (!station) return;
+  stationSelect.value = station;
+  await fetchLatestAvailability();
+  statusEl.textContent = `Selected query station: ${stationSelect.options[stationSelect.selectedIndex]?.text ?? station}.`;
+});
+
 timeline.addEventListener('input', () => {
   const idx = Number(timeline.value);
   if (timelineFrames[idx]) drawFrame(timelineFrames[idx]);
@@ -691,4 +796,5 @@ applySuggestedBtn.addEventListener('click', () => {
   statusEl.textContent = 'Applied suggested start/end range based on latest available observation.';
 });
 
+void fetchStationCatalog();
 void fetchLatestAvailability();

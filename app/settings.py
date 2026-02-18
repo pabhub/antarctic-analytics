@@ -13,6 +13,7 @@ class Settings:
     gabriel_station_id: str
     juan_station_id: str
     cache_freshness_seconds: int
+    station_catalog_freshness_seconds: int
 
 
 def _strip_wrapping_quotes(value: str) -> str:
@@ -50,4 +51,5 @@ def get_settings() -> Settings:
         gabriel_station_id=os.getenv("AEMET_GABRIEL_STATION_ID", "89064"),
         juan_station_id=os.getenv("AEMET_JUAN_STATION_ID", "89070"),
         cache_freshness_seconds=int(os.getenv("CACHE_FRESHNESS_SECONDS", str(3 * 60 * 60))),
+        station_catalog_freshness_seconds=int(os.getenv("STATION_CATALOG_FRESHNESS_SECONDS", str(7 * 24 * 60 * 60))),
     )

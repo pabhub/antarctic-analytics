@@ -167,6 +167,42 @@ button:hover { filter: brightness(1.03); transform: translateY(-1px); }
   color: #475569;
   font-size: .86rem;
 }
+.station-catalog-wrap {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  max-height: 240px;
+  overflow: auto;
+}
+.station-catalog-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .78rem;
+}
+.station-catalog-table th,
+.station-catalog-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+  vertical-align: middle;
+}
+.station-catalog-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+}
+.tiny-btn {
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: .74rem;
+  font-weight: 700;
+}
+.tag-muted {
+  font-size: .72rem;
+  font-weight: 700;
+  color: #64748b;
+}
 .export-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 button.secondary {
   background: #f8fafc;

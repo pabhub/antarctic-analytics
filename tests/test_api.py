@@ -40,6 +40,25 @@ class AvailabilityService:
         }
 
 
+class StationsService:
+    def get_station_catalog(self, force_refresh=False):
+        return {
+            "checked_at_utc": "2026-02-18T10:00:00+00:00",
+            "cached_until_utc": "2026-02-25T10:00:00+00:00",
+            "cache_hit": (not force_refresh),
+            "data": [
+                {
+                    "stationId": "89064",
+                    "stationName": "GABRIEL DE CASTILLA",
+                    "province": "ANTARTIDA",
+                    "latitude": -62.97,
+                    "longitude": -60.68,
+                    "altitude": 14.0,
+                }
+            ],
+        }
+
+
 app.dependency_overrides[get_service] = lambda: FakeService()
 client = TestClient(app)
 
@@ -133,5 +152,18 @@ def test_latest_availability_endpoint_returns_payload():
         assert payload["station"] == "gabriel-de-castilla"
         assert payload["newest_observation_utc"] == "2026-02-18T08:50:00Z"
         assert payload["suggested_start_utc"] == "2026-02-17T08:50:00Z"
+    finally:
+        app.dependency_overrides[get_service] = lambda: FakeService()
+
+
+def test_stations_catalog_endpoint_returns_cached_list():
+    app.dependency_overrides[get_service] = lambda: StationsService()
+    try:
+        response = client.get("/api/metadata/stations")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["cache_hit"] is True
+        assert len(payload["data"]) == 1
+        assert payload["data"][0]["stationId"] == "89064"
     finally:
         app.dependency_overrides[get_service] = lambda: FakeService()
