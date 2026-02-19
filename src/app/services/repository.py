@@ -18,13 +18,39 @@ class SQLiteRepository:
         if parsed.scheme != "sqlite":
             raise ValueError("Only sqlite database URLs are supported.")
 
-        if parsed.path == ":memory:":
+        if parsed.path in {":memory:", "/:memory:"}:
             self.db_path = ":memory:"
         else:
-            self.db_path = parsed.path.lstrip("/") or "aemet_cache.db"
+            raw_path = parsed.path or ""
+            # sqlite:///./file.db -> /./file.db (relative path encoded with leading slash)
+            if raw_path.startswith("/./") or raw_path.startswith("/../"):
+                normalized_path = raw_path[1:]
+            # sqlite:////tmp/file.db may parse as //tmp/file.db; normalize to /tmp/file.db
+            elif raw_path.startswith("//"):
+                normalized_path = raw_path[1:]
+            # sqlite:///tmp/file.db should remain absolute /tmp/file.db
+            elif raw_path.startswith("/"):
+                normalized_path = raw_path
+            else:
+                normalized_path = raw_path
+
+            self.db_path = normalized_path or "aemet_cache.db"
 
         logger.info("Initializing SQLite repository path=%s", self.db_path)
-        self._initialize()
+        try:
+            self._initialize()
+        except sqlite3.OperationalError as exc:
+            fallback_path = "/tmp/aemet_cache.db"
+            if self.db_path == fallback_path:
+                raise
+            logger.warning(
+                "SQLite initialization failed for path=%s (%s). Retrying with fallback path=%s",
+                self.db_path,
+                str(exc),
+                fallback_path,
+            )
+            self.db_path = fallback_path
+            self._initialize()
 
     def _new_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)

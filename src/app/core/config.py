@@ -62,11 +62,18 @@ def _env_bool(name: str, default: bool) -> bool:
     return default
 
 
+def _default_database_url() -> str:
+    # Vercel serverless filesystem is read-only except /tmp.
+    if os.getenv("VERCEL") or os.getenv("VERCEL_ENV"):
+        return "sqlite:///tmp/aemet_cache.db"
+    return "sqlite:///./aemet_cache.db"
+
+
 def get_settings() -> Settings:
     _load_dotenv_if_present()
     return Settings(
         aemet_api_key=os.getenv("AEMET_API_KEY", ""),
-        database_url=os.getenv("DATABASE_URL", "sqlite:///./aemet_cache.db"),
+        database_url=os.getenv("DATABASE_URL", _default_database_url()),
         request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
         aemet_min_request_interval_seconds=float(os.getenv("AEMET_MIN_REQUEST_INTERVAL_SECONDS", "2")),
         gabriel_station_id=os.getenv("AEMET_GABRIEL_STATION_ID", "89070"),
