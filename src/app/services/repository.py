@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import json
 import logging
+import gzip
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,22 +15,15 @@ from app.models import SourceMeasurement, StationCatalogItem
 
 logger = logging.getLogger(__name__)
 
-# Candidate locations where a pre-built cache DB may be bundled into the deploy.
+# Candidate locations where a compressed pre-built cache DB may be bundled into the deploy.
 _BUNDLED_DB_CANDIDATES = [
-    Path(__file__).resolve().parents[3] / "aemet_cache.db",  # project root
-    Path(__file__).resolve().parents[2] / "aemet_cache.db",  # src/
+    Path(__file__).resolve().parents[3] / "aemet_cache.db.gz",  # project root
+    Path(__file__).resolve().parents[2] / "aemet_cache.db.gz",  # src/
 ]
 
 
-_SQLITE_MAGIC = b"SQLite format 3\x00"
-
-
 def _seed_from_bundled(target_path: str) -> None:
-    """Copy a bundled read-only cache DB to the writable target path on Vercel.
-
-    Validates SQLite magic bytes before copying so that Git LFS pointer files
-    (which Vercel stores instead of the real blobs) are silently skipped.
-    """
+    """Decompress a bundled read-only cache DB to the writable target path on Vercel."""
     if not (os.getenv("VERCEL") or os.getenv("VERCEL_ENV")):
         return
     if os.path.exists(target_path):
@@ -38,15 +32,15 @@ def _seed_from_bundled(target_path: str) -> None:
         if not candidate.is_file():
             continue
         try:
-            header = candidate.read_bytes()[:16]
-        except OSError:
-            continue
-        if not header.startswith(_SQLITE_MAGIC):
-            logger.warning("Skipping bundled %s — not a valid SQLite file (LFS pointer?)", candidate)
-            continue
-        logger.info("Seeding cache DB from bundled %s → %s", candidate, target_path)
-        shutil.copy2(str(candidate), target_path)
-        return
+            logger.info("Seeding cache DB from bundled %s → %s", candidate, target_path)
+            with gzip.open(candidate, "rb") as f_in:
+                with open(target_path, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            return
+        except Exception as exc:
+            logger.warning("Failed to decompress bundled DB %s: %s", candidate, str(exc))
+            if os.path.exists(target_path):
+                os.remove(target_path)
 
 
 class SQLiteRepository:
