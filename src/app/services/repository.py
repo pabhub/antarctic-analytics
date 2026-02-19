@@ -265,7 +265,14 @@ class SQLiteRepository:
 
     def _initialize(self) -> None:
         if self._is_remote:
-            # Batch all DDL into a single HTTP request to avoid Vercel timeout
+            # Check if tables already exist to avoid unnecessary DDL on every cold start
+            try:
+                self._turso.execute("SELECT 1 FROM measurements LIMIT 1")
+                _log_seed("Tables already exist in Turso, skipping DDL.")
+                return
+            except Exception:
+                _log_seed("Tables not found, running DDL...")
+            # Batch all DDL into a single HTTP request
             self._turso.batch_execute(self._DDL_STATEMENTS)
         else:
             with self._write_connection() as conn:

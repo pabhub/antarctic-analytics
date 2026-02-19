@@ -62,7 +62,14 @@ def get_debug_logs():
             row = cursor.fetchone()
             info["measurement_count"] = row["cnt"] if row else "no rows"
         except Exception:
-            info["measurement_count"] = "table not created yet (will auto-create on first request)"
+            info["measurement_count"] = "table not created yet"
+        # Check fetch_windows
+        try:
+            cursor = client.execute("SELECT COUNT(*) as cnt FROM fetch_windows")
+            row = cursor.fetchone()
+            info["fetch_windows_count"] = row["cnt"] if row else 0
+        except Exception as e:
+            info["fetch_windows_count"] = f"error: {e}"
         info["turso_ok"] = True
         client.close()
     except Exception as e:
