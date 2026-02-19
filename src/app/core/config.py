@@ -84,16 +84,18 @@ def _default_database_url() -> str:
 
 
 def _normalize_database_url(raw_url: str) -> str:
-    """Convert legacy sqlite:/// URLs to file: URLs that libsql_client understands.
+    """Convert database URLs to formats that libsql_client understands.
     
     libsql_client supports: file:, libsql://, https://, ws://, wss://
-    Legacy format: sqlite:///./path or sqlite:////tmp/path
+    - libsql:// uses WebSocket (fails in Vercel serverless) → convert to https://
+    - sqlite:/// is legacy SQLAlchemy format → convert to file:
     """
-    if raw_url.startswith(("libsql://", "https://", "http://", "ws://", "wss://", "file:")):
+    # libsql:// → https:// to force HTTP protocol (WebSocket fails in serverless)
+    if raw_url.startswith("libsql://"):
+        return "https://" + raw_url[len("libsql://"):]
+    if raw_url.startswith(("https://", "http://", "ws://", "wss://", "file:")):
         return raw_url
     if raw_url.startswith("sqlite:///"):
-        # sqlite:///./file.db -> file:./file.db
-        # sqlite:////tmp/file.db -> file:///tmp/file.db
         path = raw_url[len("sqlite:///"):]
         if path.startswith("/"):
             return f"file://{path}"
