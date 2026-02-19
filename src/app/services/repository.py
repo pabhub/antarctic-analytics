@@ -12,6 +12,13 @@ from app.models import SourceMeasurement, StationCatalogItem
 
 logger = logging.getLogger(__name__)
 
+# Store cold-start seed logs in memory so we can read them via a debug API endpoint
+seed_debug_logs: list[str] = []
+
+def _log_seed(msg: str) -> None:
+    logger.info(msg)
+    seed_debug_logs.append(msg)
+
 
 # Adapter to make libsql_client.Row behave like sqlite3.Row for dictionary access
 class RowAdapter:
@@ -30,9 +37,15 @@ class RowAdapter:
 class SQLiteRepository:
     def __init__(self, database_url: str) -> None:
         self.db_path = database_url
-        logger.info("Initializing Turso/SQLite repository url=%s", self.db_path)
-        self.client = libsql_client.create_client_sync(url=self.db_path)
-        self._initialize()
+        _log_seed(f"Initializing Turso/SQLite repository url={self.db_path[:30]}...")
+        try:
+            self.client = libsql_client.create_client_sync(url=self.db_path)
+            self._initialize()
+            _log_seed("Turso/SQLite initialized successfully.")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            _log_seed(f"FATAL Turso Initialization Error: {str(exc)} | Traceback: {tb}")
 
     @contextmanager
     def _read_connection(self):

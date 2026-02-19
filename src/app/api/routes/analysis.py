@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
 
+from app.services.repository import seed_debug_logs
+
 @router.get(
     "/api/analysis/bootstrap",
     response_model=AnalysisBootstrapResponse,
@@ -57,6 +59,9 @@ def analysis_bootstrap(
     latest_observation_utc = to_utc_iso(max(latest_values) if latest_values else None)
     set_compliance_headers(response, latest_observation_utc=latest_observation_utc)
     
+    if seed_debug_logs:
+        response.headers["X-Seed-Debug"] = " | ".join(seed_debug_logs)
+        
     logger.info(
         "Analysis bootstrap served stations=%d selectable=%d snapshots=%d",
         len(payload_model.stations),
