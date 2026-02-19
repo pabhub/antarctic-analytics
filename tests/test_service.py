@@ -1076,3 +1076,51 @@ def test_create_query_job_uses_client_end_without_latest_probe():
     )
     assert out.playback_ready is True
     assert out.total_windows == 1
+
+
+def test_query_job_progresses_via_status_polling_when_background_workers_disabled():
+    rows = [
+        SourceMeasurement(
+            station_name="Station A",
+            measured_at_utc=datetime(2024, 1, 15, 0, 0, tzinfo=UTC),
+            speed_mps=5.0,
+            direction_deg=200.0,
+        )
+    ]
+    settings = Settings(
+        aemet_api_key="dummy",
+        database_url="sqlite:///:memory:",
+        request_timeout_seconds=1.0,
+        gabriel_station_id="1",
+        juan_station_id="2",
+        cache_freshness_seconds=3600,
+        station_catalog_freshness_seconds=7 * 24 * 60 * 60,
+        query_jobs_background_enabled=False,
+    )
+    repo = WindowAwareRepo(rows)
+    client = FakeClient(rows)
+    service = AntarcticService(settings, repo, client)
+
+    created = service.create_query_job(
+        station="1",
+        start_local=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end_local=datetime(2024, 3, 1, 0, 0, tzinfo=UTC),
+        timezone_input="UTC",
+        playback_step=PlaybackStep.HOURLY,
+        aggregation=TimeAggregation.HOURLY,
+        selected_types=[],
+    )
+    assert created.status.value == "pending"
+    assert created.missing_windows > 0
+
+    status = service.get_query_job_status(created.job_id)
+    assert status.completed_windows >= 1
+
+    for _ in range(8):
+        status = service.get_query_job_status(created.job_id)
+        if status.status.value == "complete":
+            break
+
+    assert status.status.value == "complete"
+    assert status.completed_windows == status.total_windows
+    assert client.calls == created.missing_windows

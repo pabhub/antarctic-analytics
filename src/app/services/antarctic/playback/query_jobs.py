@@ -31,6 +31,9 @@ class PlaybackQueryJobsMixin:
     _query_job_lock = threading.Lock()
     _query_job_threads: dict[str, threading.Thread] = {}
 
+    def _background_query_jobs_enabled(self) -> bool:
+        return bool(getattr(self.settings, "query_jobs_background_enabled", True))
+
     def create_query_job(
         self,
         station: str,
@@ -135,8 +138,11 @@ class PlaybackQueryJobsMixin:
             total_api_calls_planned,
         )
 
-        if missing_windows > 0:
+        if missing_windows > 0 and self._background_query_jobs_enabled():
             self._start_query_job_thread(job_id)
+        elif missing_windows > 0:
+            payload["message"] = "Queued missing months. Fetch progresses with status polling."
+            self.repository.upsert_analysis_query_job(payload)
 
         return self._to_query_job_created_response(payload)
 
@@ -150,14 +156,19 @@ class PlaybackQueryJobsMixin:
             self._query_job_threads[job_id] = worker
             worker.start()
 
-    def _run_query_job_worker(self, job_id: str) -> None:
+    def _run_query_job_worker(self, job_id: str, max_windows: int | None = None) -> None:
         payload = self.repository.get_analysis_query_job(job_id)
         if payload is None:
             logger.warning("Query job worker could not find payload for job id=%s", job_id)
             return
 
+        if payload.get("status") == QueryJobStatus.COMPLETE.value:
+            return
+        if payload.get("status") == QueryJobStatus.FAILED.value:
+            return
+
         payload["status"] = QueryJobStatus.RUNNING.value
-        payload["message"] = "Fetching missing windows from AEMET."
+        payload["message"] = "Fetching missing months from AEMET."
         self.repository.upsert_analysis_query_job(payload)
 
         station_id = str(payload["station_id"])
@@ -171,12 +182,13 @@ class PlaybackQueryJobsMixin:
             self.repository.upsert_analysis_query_job(payload)
             return
 
+        processed_windows = 0
         for index, window in enumerate(windows):
             if window.get("status") in {"cached", "complete"}:
                 continue
 
             attempts = int(window.get("attempts", 0))
-            max_attempts = 4
+            max_attempts = 1 if max_windows is not None else 4
             success = False
             while attempts < max_attempts and not success:
                 attempts += 1
@@ -184,7 +196,7 @@ class PlaybackQueryJobsMixin:
                 window["status"] = "running"
                 windows[index] = window
                 payload["windows_json"] = windows
-                payload["message"] = f"Fetching window {index + 1}/{total_windows}."
+                payload["message"] = f"Fetching month {index + 1}/{total_windows}."
                 self.repository.upsert_analysis_query_job(payload)
 
                 start_utc = datetime.fromisoformat(str(window["startUtc"]))
@@ -212,31 +224,32 @@ class PlaybackQueryJobsMixin:
                     window["errorDetail"] = detail
                     is_rate_limited = "429" in detail
                     is_retryable_upstream = self._is_retryable_upstream_error(detail)
-                    if (is_rate_limited or is_retryable_upstream) and attempts < max_attempts:
+
+                    if is_rate_limited or is_retryable_upstream:
                         window["status"] = "pending"
                         windows[index] = window
                         payload["windows_json"] = windows
                         limiter_seconds = max(float(getattr(self.settings, "aemet_min_request_interval_seconds", 2.0)), 0.5)
-                        # Keep worker retries aligned with configured limiter. The HTTP client already
-                        # enforces cooldown after 429 responses, so we avoid adding long extra sleeps here.
-                        sleep_seconds = limiter_seconds
                         if is_rate_limited:
                             payload["message"] = (
-                                f"AEMET rate limited on window {index + 1}/{total_windows}. "
-                                f"Retry in ~{int(round(sleep_seconds))}s using configured limiter "
-                                f"(attempt {attempts}/{max_attempts})."
+                                f"AEMET rate limited on month {index + 1}/{total_windows}. "
+                                f"Retrying with {int(round(limiter_seconds))}s pacing."
                             )
                         else:
                             payload["message"] = (
-                                f"AEMET temporary error on window {index + 1}/{total_windows}. "
-                                f"Retry in ~{int(round(sleep_seconds))}s (attempt {attempts}/{max_attempts})."
+                                f"AEMET temporary upstream error on month {index + 1}/{total_windows}. "
+                                "Will retry."
                             )
+                        self._update_query_job_progress(payload)
                         self.repository.upsert_analysis_query_job(payload)
-                        time.sleep(sleep_seconds)
-                        continue
+                        if max_windows is not None:
+                            return
+                        if attempts < max_attempts:
+                            time.sleep(limiter_seconds)
+                            continue
 
                     logger.error(
-                        "Query job id=%s failed window %s/%s station=%s after %d attempts: %s",
+                        "Query job id=%s failed month %s/%s station=%s after %d attempts: %s",
                         job_id,
                         index + 1,
                         total_windows,
@@ -249,7 +262,7 @@ class PlaybackQueryJobsMixin:
                     payload["windows_json"] = windows
                     payload["status"] = QueryJobStatus.FAILED.value
                     payload["error_detail"] = detail
-                    payload["message"] = "Backfill failed for at least one window."
+                    payload["message"] = "Backfill failed for at least one month."
                     self._update_query_job_progress(payload)
                     self.repository.upsert_analysis_query_job(payload)
                     return
@@ -259,9 +272,20 @@ class PlaybackQueryJobsMixin:
             self._update_query_job_progress(payload)
             self.repository.upsert_analysis_query_job(payload)
 
+            if window.get("status") in {"cached", "complete"}:
+                processed_windows += 1
+                if max_windows is not None and processed_windows >= max_windows:
+                    if int(payload.get("completed_windows", 0)) < int(payload.get("total_windows", 0)):
+                        payload["status"] = QueryJobStatus.RUNNING.value
+                        payload["message"] = (
+                            f"Fetching months: {payload.get('completed_windows', 0)}/{payload.get('total_windows', 0)} loaded."
+                        )
+                        self.repository.upsert_analysis_query_job(payload)
+                    return
+
         payload["status"] = QueryJobStatus.COMPLETE.value
         payload["playback_ready"] = True
-        payload["message"] = "All requested windows are available in cache."
+        payload["message"] = "All requested months are available in cache."
         self._update_query_job_progress(payload)
         self.repository.upsert_analysis_query_job(payload)
         logger.info(
@@ -291,6 +315,14 @@ class PlaybackQueryJobsMixin:
         payload = self.repository.get_analysis_query_job(job_id)
         if payload is None:
             raise AppValidationError(f"Query job '{job_id}' was not found.")
+        status_value = str(payload.get("status", ""))
+        if status_value in {QueryJobStatus.PENDING.value, QueryJobStatus.RUNNING.value}:
+            if self._background_query_jobs_enabled():
+                self._start_query_job_thread(job_id)
+            else:
+                # Serverless-safe mode: progress one month per polling request.
+                self._run_query_job_worker(job_id, max_windows=1)
+            payload = self.repository.get_analysis_query_job(job_id) or payload
         return self._to_query_job_status_response(payload)
 
     def get_query_job_result(self, job_id: str) -> FeasibilitySnapshotResponse:

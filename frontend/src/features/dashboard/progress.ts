@@ -1,9 +1,13 @@
 import { QueryJobCreateResponse, QueryJobStatusResponse } from "../../core/types.js";
 
 function normalizeMessage(message: string): string {
-  return message
+  const normalized = message
     .replace(/\bwindow\b/gi, "month")
     .replace(/\bwindows\b/gi, "months");
+  if (/^Fetching month\s+\d+\/\d+/i.test(normalized)) {
+    return "Fetching missing months.";
+  }
+  return normalized;
 }
 
 export function setQueryProgress(

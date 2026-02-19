@@ -266,6 +266,9 @@ Swagger docs:
   - skip cached windows
   - fetch only missing windows
   - report progress (`completedWindows`, `completedApiCalls`, `framesReady`, etc.)
+  - execution mode:
+    - local/default: background worker thread
+    - serverless (Vercel): poll-driven progression (each `GET /api/analysis/query-jobs/{jobId}` advances queued work)
 - Startup bootstrap warms cache for current 30-day month windows of map stations.
 - Latest availability:
   - cache-first from stored data

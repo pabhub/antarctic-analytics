@@ -23,6 +23,7 @@ class Settings:
     jwt_issuer: str = "antarctic-analytics"
     aemet_min_request_interval_seconds: float = 2.0
     aemet_retry_after_cap_seconds: float = 2.0
+    query_jobs_background_enabled: bool = True
 
 
 def _strip_wrapping_quotes(value: str) -> str:
@@ -76,12 +77,14 @@ def get_settings() -> Settings:
     retry_after_cap_seconds = float(
         os.getenv("AEMET_RETRY_AFTER_CAP_SECONDS", str(min_request_interval_seconds))
     )
+    default_background_jobs = not (os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
     return Settings(
         aemet_api_key=os.getenv("AEMET_API_KEY", ""),
         database_url=os.getenv("DATABASE_URL", _default_database_url()),
         request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
         aemet_min_request_interval_seconds=min_request_interval_seconds,
         aemet_retry_after_cap_seconds=retry_after_cap_seconds,
+        query_jobs_background_enabled=_env_bool("QUERY_JOBS_BACKGROUND_ENABLED", default_background_jobs),
         gabriel_station_id=os.getenv("AEMET_GABRIEL_STATION_ID", "89070"),
         juan_station_id=os.getenv("AEMET_JUAN_STATION_ID", "89064"),
         cache_freshness_seconds=int(os.getenv("CACHE_FRESHNESS_SECONDS", str(3 * 60 * 60))),
