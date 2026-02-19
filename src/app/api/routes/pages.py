@@ -28,3 +28,9 @@ def config_page() -> FileResponse:
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="Config page not built yet")
     return FileResponse(html_path)
+
+from app.services.repository import seed_debug_logs
+
+@router.get("/api/analysis/debug-logs", include_in_schema=False)
+def get_debug_logs():
+    return {"logs": seed_debug_logs}

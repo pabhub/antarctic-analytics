@@ -71,11 +71,6 @@ def analysis_bootstrap(
     return payload_model
 
 
-@router.get("/api/analysis/debug-logs", tags=["Analysis"], include_in_schema=False)
-def get_debug_logs():
-    return {"logs": seed_debug_logs}
-
-
 @router.post(
     "/api/analysis/query-jobs",
     response_model=QueryJobCreatedResponse,
