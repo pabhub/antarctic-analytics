@@ -97,6 +97,33 @@ def get_debug_logs():
         except Exception as e:
             info["test_read_error"] = f"{type(e).__name__}: {e}"
             info["test_read_traceback"] = traceback.format_exc()
+        # Show raw fetch_window rows to diagnose format issues
+        try:
+            cursor = client.execute(
+                "SELECT station_id, start_utc, end_utc FROM fetch_windows ORDER BY start_utc DESC LIMIT 5"
+            )
+            raw_windows = [dict(row) for row in cursor.fetchall()]
+            info["fetch_windows_sample"] = raw_windows
+        except Exception as e:
+            info["fetch_windows_sample_error"] = str(e)
+        # Simulate has_cached_fetch_window check for most recent month
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+            prev_month = (now.replace(day=1) - __import__('datetime').timedelta(days=1)).replace(day=1)
+            test_start = prev_month.isoformat()
+            test_end = now.isoformat()
+            cursor = client.execute(
+                "SELECT station_id, start_utc, end_utc FROM fetch_windows "
+                "WHERE station_id = '89070' AND start_utc <= ? AND end_utc >= ? LIMIT 1",
+                (test_start, test_end),
+            )
+            match = cursor.fetchone()
+            info["cache_check_start"] = test_start
+            info["cache_check_end"] = test_end
+            info["cache_check_result"] = dict(match) if match else "NO MATCH"
+        except Exception as e:
+            info["cache_check_error"] = str(e)
         info["turso_ok"] = True
         client.close()
     except Exception as e:
