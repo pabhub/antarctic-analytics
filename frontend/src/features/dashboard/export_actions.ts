@@ -25,18 +25,13 @@ function cloneReportCardForPdf(reportCard: HTMLElement): HTMLElement {
   clone.classList.remove("hidden");
   clone.querySelectorAll<HTMLElement>(".hidden").forEach((node) => node.remove());
 
-  const removeSelectors = [
-    ".timeframe-controls",
-    "#timeframe-status",
-    ".comparison-tab-list",
-    ".comparison-heatmap-shell",
-    ".comparison-raw-details",
-    ".timeframe-action-label",
-    "#timeframe-run",
-  ];
-  for (const selector of removeSelectors) {
-    clone.querySelectorAll(selector).forEach((node) => node.remove());
-  }
+  // Keep full report content in PDF, but remove the export button itself.
+  clone.querySelectorAll("#export-pdf").forEach((node) => node.remove());
+
+  // Expand details blocks so PDF contains full report data.
+  clone.querySelectorAll("details").forEach((node) => {
+    node.setAttribute("open", "open");
+  });
 
   const sourceCanvases = Array.from(reportCard.querySelectorAll<HTMLCanvasElement>("canvas[id]"));
   for (const sourceCanvas of sourceCanvases) {

@@ -2,8 +2,6 @@
 
 Antarctic-focused FastAPI + TypeScript app for Business Development analysts evaluating pre-feasibility of wind projects using AEMET data.
 
-## Final Status
-
 - Scope is Antarctic-only.
 - Selectable stations are only:
   - `89064` · Meteo Station Juan Carlos I
@@ -28,12 +26,14 @@ This app is intentionally constrained to Antarctic wind-feasibility screening:
 - no non-Antarctic endpoint dependence for core analytics
 - data retrieval compliant with AEMET one-month window limits
 
-## User Flow
+## Frontend User Flow
 
 1. Authenticate on `/login`.
 2. Open dashboard `/`.
 3. Select one meteo station (`89064` or `89070`) from map or dropdown.
 4. Choose history window (`2`, `3`, `5`, `10` years).
+   - 2 years: Hourly
+   - 3+ years: Daily
 5. App runs a cache-first analysis job and loads missing month windows in background.
 6. Analyst reviews:
    - wind playback overlay
