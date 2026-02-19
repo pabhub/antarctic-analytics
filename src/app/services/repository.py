@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import shutil
 import json
 import logging
@@ -6,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-import libsql_client
+import httpx
 
 from app.models import SourceMeasurement, StationCatalogItem
 
@@ -20,66 +21,105 @@ def _log_seed(msg: str) -> None:
     seed_debug_logs.append(msg)
 
 
-# Adapter to make libsql_client.Row behave like sqlite3.Row for dictionary access
-class RowAdapter:
-    def __init__(self, row):
-        self._row = row
-
-    def __getitem__(self, key):
-        if hasattr(self._row, key):
-            return getattr(self._row, key)
-        return self._row[key]
-
-    def keys(self):
-        return [k for k in dir(self._row) if not k.startswith('_')]
-
-
-class SQLiteRepository:
-    def __init__(self, database_url: str, auth_token: str = "") -> None:
-        self.db_path = database_url
-        self.auth_token = auth_token
-        _log_seed(f"Initializing Turso/SQLite repository url={self.db_path[:30]}...")
+class RowDict(dict):
+    """Dict subclass that also supports attribute access for row values."""
+    def __getattr__(self, key):
         try:
-            kwargs = {"url": self.db_path}
-            if self.auth_token:
-                kwargs["auth_token"] = self.auth_token
-            self.client = libsql_client.create_client_sync(**kwargs)
-            self._initialize()
-            _log_seed("Turso/SQLite initialized successfully.")
-        except Exception as exc:
-            import traceback
-            tb = traceback.format_exc()
-            _log_seed(f"FATAL Turso Initialization Error: {str(exc)} | Traceback: {tb}")
+            return self[key]
+        except KeyError:
+            raise AttributeError(key)
 
-    @contextmanager
-    def _read_connection(self):
-        yield self
 
-    @contextmanager
-    def _write_connection(self):
-        yield self
+class TursoHttpClient:
+    """Thin wrapper around Turso's Hrana v2 pipeline HTTP API."""
 
-    def execute(self, sql: str, args: tuple = ()) -> 'MockCursor':
-        # Translate named parameters if necessary, but we're mostly using ? so convert to args array
-        rs = self.client.execute(sql, args)
-        return MockCursor(rs)
+    def __init__(self, base_url: str, auth_token: str = ""):
+        self.base_url = base_url.rstrip("/")
+        self.auth_token = auth_token
+        headers = {"Content-Type": "application/json"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        self._http = httpx.Client(base_url=self.base_url, headers=headers, timeout=30.0)
 
-    def executemany(self, sql: str, seq_of_parameters: list[tuple]) -> None:
-        # libsql_client batch execution
-        stmts = [libsql_client.Statement(sql, args) for args in seq_of_parameters]
-        self.client.batch(stmts)
+    def execute(self, sql: str, args: tuple = ()) -> "TursoCursor":
+        stmt = {"sql": sql}
+        if args:
+            stmt["args"] = [self._encode_arg(a) for a in args]
+        payload = {
+            "requests": [
+                {"type": "execute", "stmt": stmt},
+                {"type": "close"},
+            ]
+        }
+        resp = self._http.post("/v2/pipeline", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        results = data.get("results", [])
+        if results and results[0].get("type") == "ok":
+            result = results[0]["response"]["result"]
+            cols = [c["name"] for c in result.get("cols", [])]
+            raw_rows = result.get("rows", [])
+            rows = []
+            for raw_row in raw_rows:
+                row_values = [self._decode_value(v) for v in raw_row]
+                rows.append(RowDict(zip(cols, row_values)))
+            return TursoCursor(rows)
+        elif results and results[0].get("type") == "error":
+            error = results[0].get("error", {})
+            raise RuntimeError(f"Turso error: {error.get('message', str(error))}")
+        return TursoCursor([])
+
+    def executemany(self, sql: str, seq_of_params: list[tuple]) -> None:
+        requests = []
+        for args in seq_of_params:
+            stmt = {"sql": sql}
+            if args:
+                stmt["args"] = [self._encode_arg(a) for a in args]
+            requests.append({"type": "execute", "stmt": stmt})
+        requests.append({"type": "close"})
+        resp = self._http.post("/v2/pipeline", json={"requests": requests})
+        resp.raise_for_status()
+
+    @staticmethod
+    def _encode_arg(value):
+        if value is None:
+            return {"type": "null"}
+        elif isinstance(value, int):
+            return {"type": "integer", "value": str(value)}
+        elif isinstance(value, float):
+            return {"type": "float", "value": value}
+        elif isinstance(value, str):
+            return {"type": "text", "value": value}
+        elif isinstance(value, bytes):
+            import base64
+            return {"type": "blob", "base64": base64.b64encode(value).decode()}
+        return {"type": "text", "value": str(value)}
+
+    @staticmethod
+    def _decode_value(v):
+        if v is None or v.get("type") == "null":
+            return None
+        t = v.get("type", "")
+        val = v.get("value")
+        if t == "integer":
+            return int(val)
+        elif t == "float":
+            return float(val)
+        elif t == "blob":
+            import base64
+            return base64.b64decode(v.get("base64", ""))
+        return val  # text or unknown
 
     def commit(self):
         pass
 
     def close(self):
-        self.client.close()
+        self._http.close()
 
 
-class MockCursor:
-    def __init__(self, result_set):
-        self.result_set = result_set
-        self.rows = [RowAdapter(row) for row in result_set.rows] if result_set and hasattr(result_set, 'rows') else []
+class TursoCursor:
+    def __init__(self, rows: list[RowDict]):
+        self.rows = rows
         self._idx = 0
 
     def fetchone(self):
@@ -91,6 +131,58 @@ class MockCursor:
 
     def fetchall(self):
         return self.rows
+
+
+class SQLiteRepository:
+    def __init__(self, database_url: str, auth_token: str = "") -> None:
+        self.db_path = database_url
+        self.auth_token = auth_token
+        self._is_remote = database_url.startswith("https://") or database_url.startswith("http://")
+        _log_seed(f"Initializing repository url={self.db_path[:40]}... remote={self._is_remote}")
+        try:
+            if self._is_remote:
+                self._turso = TursoHttpClient(self.db_path, auth_token=self.auth_token)
+            else:
+                self._turso = None
+            self._initialize()
+            _log_seed("Repository initialized successfully.")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            _log_seed(f"FATAL Repository Init Error: {str(exc)} | Traceback: {tb}")
+
+    def _new_local_connection(self) -> sqlite3.Connection:
+        """Create a local sqlite3 connection for file: databases."""
+        db_path = self.db_path
+        if db_path.startswith("file:"):
+            db_path = db_path.replace("file://", "").replace("file:", "")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 5000")
+        return conn
+
+    @contextmanager
+    def _read_connection(self):
+        if self._is_remote:
+            yield self._turso
+        else:
+            conn = self._new_local_connection()
+            conn.execute("PRAGMA query_only = ON")
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+    @contextmanager
+    def _write_connection(self):
+        if self._is_remote:
+            yield self._turso
+        else:
+            conn = self._new_local_connection()
+            try:
+                yield conn
+            finally:
+                conn.close()
 
     def _initialize(self) -> None:
         with self._write_connection() as conn:
