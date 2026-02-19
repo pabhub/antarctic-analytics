@@ -67,8 +67,29 @@ def _env_bool(name: str, default: bool) -> bool:
 def _default_database_url() -> str:
     # Vercel serverless filesystem is read-only except /tmp.
     if os.getenv("VERCEL") or os.getenv("VERCEL_ENV"):
-        return "/tmp/aemet_cache.db"
-    return "aemet_cache.db"
+        return "file:///tmp/aemet_cache.db"
+    return "file:aemet_cache.db"
+
+
+def _normalize_database_url(raw_url: str) -> str:
+    """Convert legacy sqlite:/// URLs to file: URLs that libsql_client understands.
+    
+    libsql_client supports: file:, libsql://, https://, ws://, wss://
+    Legacy format: sqlite:///./path or sqlite:////tmp/path
+    """
+    if raw_url.startswith(("libsql://", "https://", "http://", "ws://", "wss://", "file:")):
+        return raw_url
+    if raw_url.startswith("sqlite:///"):
+        # sqlite:///./file.db -> file:./file.db
+        # sqlite:////tmp/file.db -> file:///tmp/file.db
+        path = raw_url[len("sqlite:///"):]
+        if path.startswith("/"):
+            return f"file://{path}"
+        return f"file:{path}"
+    # Bare path like "aemet_cache.db" or "/tmp/aemet_cache.db"
+    if raw_url.startswith("/"):
+        return f"file://{raw_url}"
+    return f"file:{raw_url}"
 
 
 def get_settings() -> Settings:
@@ -78,9 +99,10 @@ def get_settings() -> Settings:
         os.getenv("AEMET_RETRY_AFTER_CAP_SECONDS", str(min_request_interval_seconds))
     )
     default_background_jobs = not (os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
+    raw_db_url = os.getenv("DATABASE_URL", _default_database_url())
     return Settings(
         aemet_api_key=os.getenv("AEMET_API_KEY", ""),
-        database_url=os.getenv("DATABASE_URL", _default_database_url()),
+        database_url=_normalize_database_url(raw_db_url),
         request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
         aemet_min_request_interval_seconds=min_request_interval_seconds,
         aemet_retry_after_cap_seconds=retry_after_cap_seconds,
