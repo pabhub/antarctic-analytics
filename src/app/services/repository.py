@@ -2,6 +2,7 @@ import os
 import sqlite3
 import shutil
 import json
+import math
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -104,7 +105,8 @@ class TursoHttpClient:
         if t == "integer":
             return int(val)
         elif t == "float":
-            return float(val)
+            f = float(val)
+            return None if (math.isnan(f) or math.isinf(f)) else f
         elif t == "blob":
             import base64
             return base64.b64decode(v.get("base64", ""))

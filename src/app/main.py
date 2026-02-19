@@ -1,10 +1,13 @@
 import logging
+import math
+import json as json_module
 from contextlib import asynccontextmanager
 from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import get_service, router
@@ -13,6 +16,35 @@ from app.core.logging import configure_logging
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+
+class NanSafeEncoder(json_module.JSONEncoder):
+    """JSON encoder that converts NaN/Inf floats to None."""
+    def default(self, o):
+        return super().default(o)
+
+    def encode(self, o):
+        return super().encode(self._sanitize(o))
+
+    def _sanitize(self, obj):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        if isinstance(obj, dict):
+            return {k: self._sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [self._sanitize(v) for v in obj]
+        return obj
+
+
+class NanSafeJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        return json_module.dumps(
+            content,
+            cls=NanSafeEncoder,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+
 
 OPENAPI_TAGS = [
     {"name": "Authentication", "description": "JWT token issuance and refresh for API access."},
@@ -44,6 +76,7 @@ app = FastAPI(
     ),
     openapi_tags=OPENAPI_TAGS,
     lifespan=lifespan,
+    default_response_class=NanSafeJSONResponse,
 )
 app.include_router(router)
 
