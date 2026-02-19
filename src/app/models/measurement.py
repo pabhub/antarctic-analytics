@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
@@ -50,7 +48,7 @@ class MeasurementResponse(BaseModel):
     aggregation: TimeAggregation
     selected_types: list[MeasurementType]
     timezone_input: str
-    timezone_output: Literal["Europe/Madrid"] = "Europe/Madrid"
+    timezone_output: str
     data: list[OutputMeasurement]
 
 
@@ -69,4 +67,3 @@ class LatestAvailabilityResponse(BaseModel):
     probe_window_hours: int | None = None
     suggested_aggregation: TimeAggregation | None = None
     note: str
-

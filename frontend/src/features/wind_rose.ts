@@ -153,7 +153,7 @@ export function renderWindRoseChart(canvas: HTMLCanvasElement, rose: WindRoseSum
           text:
             rose.dominantSector == null
               ? "No directional distribution available for this timeframe."
-              : `Dominant: ${rose.dominantSector} · Directional concentration ${((rose.directionalConcentration ?? 0) * 100).toFixed(1)}% · Calm share ${((rose.calmShare ?? 0) * 100).toFixed(1)}%`,
+              : `Dominant heading (toward): ${rose.dominantSector} · Directional concentration ${((rose.directionalConcentration ?? 0) * 100).toFixed(1)}% · Calm share ${((rose.calmShare ?? 0) * 100).toFixed(1)}%`,
           color: "#475569",
           padding: { bottom: 8 },
           font: { size: 11, weight: "600" },

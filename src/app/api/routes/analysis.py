@@ -15,7 +15,6 @@ from app.models import (
     QueryJobCreateRequest,
     QueryJobCreatedResponse,
     QueryJobStatusResponse,
-    TimeAggregation,
     TimeframeAnalyticsResponse,
     TimeframeGroupBy,
     WindFarmSimulationParams,
@@ -95,7 +94,7 @@ def create_query_job(
             start_local=start,
             timezone_input=payload.location,
             playback_step=payload.playback_step,
-            aggregation=TimeAggregation.NONE,
+            aggregation=payload.aggregation,
             selected_types=selected_types,
             history_start_local=history_start,
         )
@@ -183,8 +182,10 @@ def playback(
         raise HTTPException(status_code=400, detail=f"Invalid timezone location: {location}") from exc
 
     try:
-        start_local = datetime.fromisoformat(start).replace(tzinfo=tz)
-        end_local = datetime.fromisoformat(end).replace(tzinfo=tz)
+        start_parsed = datetime.fromisoformat(start)
+        end_parsed = datetime.fromisoformat(end)
+        start_local = start_parsed.replace(tzinfo=tz) if start_parsed.tzinfo is None else start_parsed.astimezone(tz)
+        end_local = end_parsed.replace(tzinfo=tz) if end_parsed.tzinfo is None else end_parsed.astimezone(tz)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Datetime format must be YYYY-MM-DDTHH:MM:SS") from exc
     try:
@@ -249,8 +250,10 @@ def timeframe_analytics(
         raise HTTPException(status_code=400, detail=f"Invalid timezone location: {location}") from exc
 
     try:
-        start_local = datetime.fromisoformat(start).replace(tzinfo=tz)
-        end_local = datetime.fromisoformat(end).replace(tzinfo=tz)
+        start_parsed = datetime.fromisoformat(start)
+        end_parsed = datetime.fromisoformat(end)
+        start_local = start_parsed.replace(tzinfo=tz) if start_parsed.tzinfo is None else start_parsed.astimezone(tz)
+        end_local = end_parsed.replace(tzinfo=tz) if end_parsed.tzinfo is None else end_parsed.astimezone(tz)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Datetime format must be YYYY-MM-DDTHH:MM:SS") from exc
 
@@ -258,9 +261,19 @@ def timeframe_analytics(
     compare_end_local = None
     try:
         if compare_start is not None:
-            compare_start_local = datetime.fromisoformat(compare_start).replace(tzinfo=tz)
+            compare_start_parsed = datetime.fromisoformat(compare_start)
+            compare_start_local = (
+                compare_start_parsed.replace(tzinfo=tz)
+                if compare_start_parsed.tzinfo is None
+                else compare_start_parsed.astimezone(tz)
+            )
         if compare_end is not None:
-            compare_end_local = datetime.fromisoformat(compare_end).replace(tzinfo=tz)
+            compare_end_parsed = datetime.fromisoformat(compare_end)
+            compare_end_local = (
+                compare_end_parsed.replace(tzinfo=tz)
+                if compare_end_parsed.tzinfo is None
+                else compare_end_parsed.astimezone(tz)
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Comparison datetime format must be YYYY-MM-DDTHH:MM:SS") from exc
     if (compare_start_local is None) != (compare_end_local is None):

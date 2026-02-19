@@ -46,7 +46,7 @@ export class PlaybackManager {
       this.deps.elements.playbackSlider.max = String(Math.max(0, total - 1));
       this.deps.elements.playbackSlider.value = String(index);
       if (!frame) return;
-      const frameStatusText = `${formatDateTime(frame.datetime)} · Speed ${formatNumber(frame.speed)} m/s · Direction ${formatNumber(frame.direction)}º · Temp ${formatNumber(frame.temperature)} ºC · Pressure ${formatNumber(frame.pressure)} hPa · ${frame.qualityFlag}`;
+      const frameStatusText = `${formatDateTime(frame.datetime)} · Speed ${formatNumber(frame.speed)} m/s · Heading (toward) ${formatNumber(frame.direction)}º · Temp ${formatNumber(frame.temperature)} ºC · Pressure ${formatNumber(frame.pressure)} hPa · ${frame.qualityFlag}`;
       this.deps.elements.playbackStatusEl.textContent = frameStatusText;
       this.deps.elements.playbackStatusEl.title = frameStatusText;
       renderPlaybackOverlay(this.deps.overlayController, frame, {
@@ -139,7 +139,7 @@ export class PlaybackManager {
       return;
     }
     const playbackSummaryText =
-      `Dominant direction: ${payload.windRose.dominantSector} · Concentration: ${concentration} · Calm share: ${
+      `Dominant heading (toward): ${payload.windRose.dominantSector} · Concentration: ${concentration} · Calm share: ${
         payload.windRose.calmShare == null ? "n/a" : `${(payload.windRose.calmShare * 100).toFixed(1)}%`
       }`;
     this.deps.elements.playbackStatusEl.textContent = playbackSummaryText;

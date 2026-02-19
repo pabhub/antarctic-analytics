@@ -20,7 +20,8 @@ router = APIRouter(tags=["Data Export"])
     summary="Export cached-or-fetched station observations as CSV/Parquet",
     description=(
         "Returns export files for the requested station window. Windows larger than one month are internally "
-        "resolved through month-sized cache-first fetches to comply with AEMET limits."
+        "resolved through month-sized cache-first fetches to comply with AEMET limits. "
+        "Use aggregation values: none, hourly, daily, monthly."
     ),
 )
 def export_antarctic_data(
@@ -39,19 +40,33 @@ def export_antarctic_data(
         raise HTTPException(status_code=400, detail=f"Invalid timezone location: {location}") from exc
 
     try:
-        start = datetime.fromisoformat(fechaIniStr).replace(tzinfo=tz)
-        end = datetime.fromisoformat(fechaFinStr).replace(tzinfo=tz)
+        start_parsed = datetime.fromisoformat(fechaIniStr)
+        end_parsed = datetime.fromisoformat(fechaFinStr)
+        start = start_parsed.replace(tzinfo=tz) if start_parsed.tzinfo is None else start_parsed.astimezone(tz)
+        end = end_parsed.replace(tzinfo=tz) if end_parsed.tzinfo is None else end_parsed.astimezone(tz)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Datetime format must be YYYY-MM-DDTHH:MM:SS") from exc
 
     try:
-        data = service.get_data(
-            station=identificacion,
-            start_local=start,
-            end_local=end,
-            aggregation=aggregation,
-            selected_types=types,
-        )
+        try:
+            data = service.get_data(
+                station=identificacion,
+                start_local=start,
+                end_local=end,
+                aggregation=aggregation,
+                selected_types=types,
+                output_tz=tz,
+            )
+        except TypeError as exc:
+            if "output_tz" not in str(exc):
+                raise
+            data = service.get_data(
+                station=identificacion,
+                start_local=start,
+                end_local=end,
+                aggregation=aggregation,
+                selected_types=types,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

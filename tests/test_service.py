@@ -221,7 +221,7 @@ def test_hourly_aggregation_and_filter_types():
     assert out[0].direction_deg in {0.0, 360.0}
 
 
-def test_daily_aggregation_uses_europe_madrid_dst_boundary():
+def test_daily_aggregation_uses_station_local_boundary():
     rows = [
         SourceMeasurement(station_name="X", measured_at_utc=datetime(2024, 3, 30, 23, 30, tzinfo=UTC), temperature_c=2.0, pressure_hpa=1000.0, speed_mps=1.0),
         SourceMeasurement(station_name="X", measured_at_utc=datetime(2024, 3, 31, 21, 30, tzinfo=UTC), temperature_c=4.0, pressure_hpa=1002.0, speed_mps=3.0),
@@ -236,9 +236,11 @@ def test_daily_aggregation_uses_europe_madrid_dst_boundary():
         selected_types=[],
     )
 
-    assert len(out) == 1
+    assert len(out) == 2
     assert out[0].datetime_cet.isoformat().endswith("+01:00")
-    assert out[0].temperature_c == 3.0
+    assert out[1].datetime_cet.isoformat().endswith("+02:00")
+    assert out[0].temperature_c == 2.0
+    assert out[1].temperature_c == 4.0
 
 
 def test_geospatial_fields_are_exposed_for_mapping():
@@ -791,6 +793,76 @@ def test_playback_step_is_upsized_for_long_frame_ranges():
         timezone_input="UTC",
     )
     assert out.effective_step in {PlaybackStep.HOURLY, PlaybackStep.THREE_HOURLY, PlaybackStep.DAILY}
+
+
+def test_playback_wind_rose_uses_toward_heading_without_double_conversion():
+    rows = [
+        SourceMeasurement(
+            station_name="Station A",
+            measured_at_utc=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            speed_mps=6.0,
+            direction_deg=0.0,
+            temperature_c=-3.0,
+            pressure_hpa=995.0,
+        )
+    ]
+    service, repo, _ = build_service(rows, has_fresh_cache=True)
+    repo.latest_measurement = datetime(2024, 1, 1, 1, 0, tzinfo=UTC)
+
+    out = service.get_playback_frames(
+        station="1",
+        start_local=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end_local=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+        step=PlaybackStep.HOURLY,
+        timezone_input="UTC",
+    )
+
+    assert out.frames
+    assert out.frames[0].direction_deg == 180.0
+    assert out.wind_rose.dominant_sector == "S"
+
+
+def test_three_hour_playback_keeps_toward_heading_consistent():
+    rows = [
+        SourceMeasurement(
+            station_name="Station A",
+            measured_at_utc=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            speed_mps=6.0,
+            direction_deg=0.0,
+            temperature_c=-3.0,
+            pressure_hpa=995.0,
+        ),
+        SourceMeasurement(
+            station_name="Station A",
+            measured_at_utc=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+            speed_mps=6.2,
+            direction_deg=0.0,
+            temperature_c=-2.8,
+            pressure_hpa=995.2,
+        ),
+        SourceMeasurement(
+            station_name="Station A",
+            measured_at_utc=datetime(2024, 1, 1, 2, 0, tzinfo=UTC),
+            speed_mps=5.8,
+            direction_deg=0.0,
+            temperature_c=-3.1,
+            pressure_hpa=994.8,
+        ),
+    ]
+    service, repo, _ = build_service(rows, has_fresh_cache=True)
+    repo.latest_measurement = datetime(2024, 1, 1, 3, 0, tzinfo=UTC)
+
+    out = service.get_playback_frames(
+        station="1",
+        start_local=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end_local=datetime(2024, 1, 1, 3, 0, tzinfo=UTC),
+        step=PlaybackStep.THREE_HOURLY,
+        timezone_input="UTC",
+    )
+
+    assert out.frames
+    assert out.frames[0].direction_deg == 180.0
+    assert out.wind_rose.dominant_sector == "S"
 
 
 def test_timeframe_analytics_returns_generation_when_simulation_params_passed():

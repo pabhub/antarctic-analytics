@@ -25,6 +25,8 @@ export type DashboardActionElements = {
   statusEl: HTMLParagraphElement;
   playbackProgressWrap: HTMLDivElement;
   queryProgressWrap: HTMLDivElement;
+  queryProgressBar: HTMLProgressElement;
+  queryProgressText: HTMLParagraphElement;
   playbackWindowLabelEl: HTMLParagraphElement;
   timeframeCardsEl: HTMLDivElement;
   timeframeBodyEl: HTMLTableSectionElement;
@@ -64,4 +66,6 @@ export type DashboardActionsContext = {
   setLoading: (loading: boolean) => void;
   setPlaybackButtonVisual: (playing: boolean) => void;
   setQueryProgress: (status: QueryJobCreateResponse | QueryJobStatusResponse) => void;
+  setQueryProgressAnalyzing: (totalMonths: number, message: string) => void;
+  showToast: (message: string) => void;
 };

@@ -43,7 +43,7 @@ export function rawTablesTemplate(): string {
               <thead>
                 <tr>
                   <th>Station</th>
-                  <th>Rows</th>
+                  <th>Data Points</th>
                   <th>Coverage</th>
                   <th>Avg Speed</th>
                   <th>P90 Speed (90th pct)</th>
@@ -59,7 +59,7 @@ export function rawTablesTemplate(): string {
           </div>
         </div>
         <div class="table-group">
-          <h3>Selected Station Detailed Rows</h3>
+          <h3>Selected Station Detailed Data Points</h3>
           <div class="table-wrap">
             <table>
               <thead>

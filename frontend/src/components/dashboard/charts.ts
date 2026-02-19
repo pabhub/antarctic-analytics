@@ -10,7 +10,7 @@ export function dashboardChartsTemplate(): string {
         <div class="chart-shell"><canvas id="weather-chart"></canvas></div>
       </article>
       <article id="rose-chart-card" class="card chart-card">
-        <h2>Wind Direction Compass (N/E/S/W axes)</h2>
+        <h2>Wind Direction Compass (toward flow)</h2>
         <div class="chart-shell"><canvas id="rose-chart"></canvas></div>
       </article>
     </section>

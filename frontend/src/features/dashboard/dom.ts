@@ -5,6 +5,9 @@ export type DashboardDomElements = {
   historyYearsSelect: HTMLSelectElement;
   statusEl: HTMLParagraphElement;
   errorBannerEl: HTMLParagraphElement;
+  toastEl: HTMLDivElement;
+  toastTextEl: HTMLParagraphElement;
+  toastCloseBtn: HTMLButtonElement;
   playbackWindowLabelEl: HTMLParagraphElement;
   resultsSkeletonEl: HTMLDivElement;
   metricsGridEl: HTMLDivElement;
@@ -24,7 +27,7 @@ export type DashboardDomElements = {
   decisionCardEl: HTMLDivElement;
   mapPlaybackShellEl: HTMLDivElement;
   chartsSectionEl: HTMLDivElement;
-  timeframeCardEl: HTMLDivElement;
+  timeframeSectionEl: HTMLDivElement;
   rawCardEl: HTMLDivElement;
   windChartCardEl: HTMLDivElement;
   weatherChartCardEl: HTMLDivElement;
@@ -47,6 +50,7 @@ export type DashboardDomElements = {
   timeframeRunBtn: HTMLButtonElement;
   timeframeStatusEl: HTMLParagraphElement;
   timeframeCardsEl: HTMLDivElement;
+  timeframePeriodHeaderEl: HTMLTableCellElement;
   timeframeBodyEl: HTMLTableSectionElement;
   timeframeComparisonEl: HTMLDivElement;
   timeframeGenerationEl: HTMLParagraphElement;
@@ -64,6 +68,9 @@ export function getDashboardDomElements(): DashboardDomElements {
     historyYearsSelect: requiredElement<HTMLSelectElement>("history-years"),
     statusEl: requiredElement<HTMLParagraphElement>("status"),
     errorBannerEl: requiredElement<HTMLParagraphElement>("error-banner"),
+    toastEl: requiredElement<HTMLDivElement>("app-toast"),
+    toastTextEl: requiredElement<HTMLParagraphElement>("app-toast-text"),
+    toastCloseBtn: requiredElement<HTMLButtonElement>("app-toast-close"),
     playbackWindowLabelEl: requiredElement<HTMLParagraphElement>("playback-window-label"),
     resultsSkeletonEl: requiredElement<HTMLDivElement>("results-skeleton"),
     metricsGridEl: requiredElement<HTMLDivElement>("metrics-grid"),
@@ -83,7 +90,7 @@ export function getDashboardDomElements(): DashboardDomElements {
     decisionCardEl: requiredElement<HTMLDivElement>("decision-card"),
     mapPlaybackShellEl: requiredElement<HTMLDivElement>("map-playback-shell"),
     chartsSectionEl: requiredElement<HTMLDivElement>("charts-section"),
-    timeframeCardEl: requiredElement<HTMLDivElement>("timeframe-card"),
+    timeframeSectionEl: requiredElement<HTMLDivElement>("timeframe-section"),
     rawCardEl: requiredElement<HTMLDivElement>("raw-card"),
     windChartCardEl: requiredElement<HTMLDivElement>("wind-chart-card"),
     weatherChartCardEl: requiredElement<HTMLDivElement>("weather-chart-card"),
@@ -106,6 +113,7 @@ export function getDashboardDomElements(): DashboardDomElements {
     timeframeRunBtn: requiredElement<HTMLButtonElement>("timeframe-run"),
     timeframeStatusEl: requiredElement<HTMLParagraphElement>("timeframe-status"),
     timeframeCardsEl: requiredElement<HTMLDivElement>("timeframe-cards"),
+    timeframePeriodHeaderEl: requiredElement<HTMLTableCellElement>("timeframe-period-column"),
     timeframeBodyEl: requiredElement<HTMLTableSectionElement>("timeframe-output"),
     timeframeComparisonEl: requiredElement<HTMLDivElement>("timeframe-comparison"),
     timeframeGenerationEl: requiredElement<HTMLParagraphElement>("generation-summary"),

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from math import cos, radians, sin, sqrt
 from statistics import pvariance
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.core.exceptions import AppValidationError
 from app.models import (
@@ -34,8 +35,8 @@ from app.models import (
     WindRoseBin,
     WindRoseSummary,
 )
-from app.services.antarctic.constants import MADRID_TZ, UTC
-from app.services.antarctic.math_utils import avg, avg_angle_deg, percentile
+from app.services.antarctic.constants import STATION_LOCAL_TZ, UTC
+from app.services.antarctic.math_utils import avg, avg_angle_deg, dominant_angle_deg, percentile, wind_toward_direction_deg
 from app.services.antarctic.windows import split_month_windows_covering_range
 
 
@@ -289,8 +290,10 @@ class PlaybackAnalyticsMixin:
             raise AppValidationError(f"Query job '{job_id}' was not found.")
 
         station_id = str(payload["station_id"])
-        start_local = datetime.fromisoformat(str(payload["requested_start_utc"])).astimezone(MADRID_TZ)
-        end_local = datetime.fromisoformat(str(payload["effective_end_utc"])).astimezone(MADRID_TZ)
+        timezone_input = str(payload["timezone_input"])
+        output_tz = self._resolve_output_timezone(timezone_input)
+        start_local = datetime.fromisoformat(str(payload["requested_start_utc"])).astimezone(output_tz)
+        end_local = datetime.fromisoformat(str(payload["effective_end_utc"])).astimezone(output_tz)
         aggregation = TimeAggregation(str(payload["aggregation"]))
         selected_types = [MeasurementType(value) for value in payload.get("selected_types_json", [])]
         snapshot = self.get_station_snapshot(
@@ -299,7 +302,7 @@ class PlaybackAnalyticsMixin:
             end_local=end_local,
             aggregation=aggregation,
             selected_types=selected_types,
-            timezone_input=str(payload["timezone_input"]),
+            timezone_input=timezone_input,
         )
         if payload["status"] != QueryJobStatus.COMPLETE.value:
             snapshot.notes.append(
@@ -319,6 +322,7 @@ class PlaybackAnalyticsMixin:
         selected_station_id = self.station_id_for(station)
         self._assert_station_supported_by_antarctic_endpoint(selected_station_id)
         self._assert_station_selectable(selected_station_id)
+        output_tz = self._resolve_output_timezone(timezone_input, start_local.tzinfo or UTC)
 
         latest = self.get_latest_availability(selected_station_id)
         if latest.newest_observation_utc is None:
@@ -326,7 +330,7 @@ class PlaybackAnalyticsMixin:
                 f"No recent observations are available for station '{selected_station_id}'."
             )
 
-        latest_local = latest.newest_observation_utc.astimezone(start_local.tzinfo or UTC)
+        latest_local = latest.newest_observation_utc.astimezone(output_tz)
         effective_end_local = latest_local
         if end_local is not None:
             effective_end_local = min(effective_end_local, end_local)
@@ -342,6 +346,7 @@ class PlaybackAnalyticsMixin:
             end_local=effective_end_local,
             aggregation=aggregation,
             selected_types=selected_types,
+            output_tz=output_tz,
         )
         profile = next((item for item in self.get_station_profiles() if item.station_id == selected_station_id), None)
         station_name = profile.station_name if profile is not None else selected_station_id
@@ -366,6 +371,7 @@ class PlaybackAnalyticsMixin:
             effectiveEnd=effective_end_local,
             effectiveEndReason="limited_by_station_constraints",
             timezone_input=timezone_input,
+            timezone_output=getattr(output_tz, "key", str(output_tz)),
             aggregation=aggregation,
             mapStationIds=[selected_station_id],
             notes=[
@@ -397,10 +403,11 @@ class PlaybackAnalyticsMixin:
         self._assert_station_selectable(station_id)
         if start_local >= end_local:
             raise AppValidationError("Start datetime must be before end datetime.")
+        output_tz = self._resolve_output_timezone(timezone_input, start_local.tzinfo or UTC)
 
         effective_step = self._coerce_playback_step(start_local, end_local, step)
-        rows = self._rows_for_playback(station_id, start_local, end_local, effective_step)
-        frames = self._rows_to_frames(rows, start_local, end_local, effective_step)
+        rows = self._rows_for_playback(station_id, start_local, end_local, effective_step, output_tz=output_tz)
+        frames = self._rows_to_frames(rows, start_local, end_local, effective_step, output_tz=output_tz)
         profile = next((item for item in self.get_station_profiles() if item.station_id == station_id), None)
         station_name = profile.station_name if profile is not None else station_id
 
@@ -412,19 +419,7 @@ class PlaybackAnalyticsMixin:
         for frame in frames:
             quality_counts[frame.quality_flag.value] = quality_counts.get(frame.quality_flag.value, 0) + 1
 
-        wind_rose = self._build_wind_rose(
-            [OutputMeasurement(
-                stationName=station_name,
-                datetime=frame.datetime_local,
-                temperature=frame.temperature_c,
-                pressure=frame.pressure_hpa,
-                speed=frame.speed_mps,
-                direction=frame.direction_deg,
-                latitude=None,
-                longitude=None,
-                altitude=None,
-            ) for frame in frames]
-        )
+        wind_rose = self._build_wind_rose(rows)
 
         return PlaybackResponse(
             stationId=station_id,
@@ -432,6 +427,7 @@ class PlaybackAnalyticsMixin:
             requestedStep=step,
             effectiveStep=effective_step,
             timezone_input=timezone_input,
+            timezone_output=getattr(output_tz, "key", str(output_tz)),
             start=start_local,
             end=end_local,
             frames=frames,
@@ -458,6 +454,7 @@ class PlaybackAnalyticsMixin:
         self._assert_station_selectable(station_id)
         if start_local >= end_local:
             raise AppValidationError("Start datetime must be before end datetime.")
+        output_tz = self._resolve_output_timezone(timezone_input, start_local.tzinfo or UTC)
 
         rows = self.get_data(
             station=station_id,
@@ -465,6 +462,7 @@ class PlaybackAnalyticsMixin:
             end_local=end_local,
             aggregation=TimeAggregation.NONE,
             selected_types=[],
+            output_tz=output_tz,
         )
         if not rows and force_refresh_on_empty:
             self.refresh_data_range(
@@ -478,8 +476,9 @@ class PlaybackAnalyticsMixin:
                 end_local=end_local,
                 aggregation=TimeAggregation.NONE,
                 selected_types=[],
+                output_tz=output_tz,
             )
-        buckets = self._group_timeframe_buckets(rows, group_by, simulation_params)
+        buckets = self._group_timeframe_buckets(rows, group_by, simulation_params, output_tz=output_tz)
 
         comparison: list[ComparisonDelta] = []
         if compare_start_local is not None and compare_end_local is not None and compare_start_local < compare_end_local:
@@ -489,6 +488,7 @@ class PlaybackAnalyticsMixin:
                 end_local=compare_end_local,
                 aggregation=TimeAggregation.NONE,
                 selected_types=[],
+                output_tz=output_tz,
             )
             comparison = self._comparison_deltas(rows, compare_rows, simulation_params)
 
@@ -500,6 +500,7 @@ class PlaybackAnalyticsMixin:
             stationName=station_name,
             groupBy=group_by,
             timezone_input=timezone_input,
+            timezone_output=getattr(output_tz, "key", str(output_tz)),
             requestedStart=start_local,
             requestedEnd=end_local,
             buckets=buckets,
@@ -513,6 +514,7 @@ class PlaybackAnalyticsMixin:
         start_local: datetime,
         end_local: datetime,
         step: PlaybackStep,
+        output_tz: ZoneInfo,
     ) -> list[OutputMeasurement]:
         if step == PlaybackStep.TEN_MINUTES:
             return self.get_data(
@@ -521,6 +523,7 @@ class PlaybackAnalyticsMixin:
                 end_local=end_local,
                 aggregation=TimeAggregation.NONE,
                 selected_types=[],
+                output_tz=output_tz,
             )
         if step == PlaybackStep.HOURLY:
             return self.get_data(
@@ -529,6 +532,7 @@ class PlaybackAnalyticsMixin:
                 end_local=end_local,
                 aggregation=TimeAggregation.HOURLY,
                 selected_types=[],
+                output_tz=output_tz,
             )
         if step == PlaybackStep.DAILY:
             return self.get_data(
@@ -537,6 +541,7 @@ class PlaybackAnalyticsMixin:
                 end_local=end_local,
                 aggregation=TimeAggregation.DAILY,
                 selected_types=[],
+                output_tz=output_tz,
             )
 
         hourly = self.get_data(
@@ -545,6 +550,7 @@ class PlaybackAnalyticsMixin:
             end_local=end_local,
             aggregation=TimeAggregation.HOURLY,
             selected_types=[],
+            output_tz=output_tz,
         )
         grouped: dict[datetime, list[OutputMeasurement]] = {}
         for row in hourly:
@@ -562,7 +568,9 @@ class PlaybackAnalyticsMixin:
                     temperature=avg([point.temperature_c for point in points]),
                     pressure=avg([point.pressure_hpa for point in points]),
                     speed=avg([point.speed_mps for point in points]),
-                    direction=avg_angle_deg([point.direction_deg for point in points]),
+                    direction=avg_angle_deg(
+                        [point.direction_deg for point in points if point.direction_deg is not None]
+                    ),
                     latitude=points[0].latitude,
                     longitude=points[0].longitude,
                     altitude=points[0].altitude_m,
@@ -576,17 +584,18 @@ class PlaybackAnalyticsMixin:
         start_local: datetime,
         end_local: datetime,
         step: PlaybackStep,
+        output_tz: ZoneInfo,
     ) -> list[PlaybackFrame]:
         if not rows and start_local >= end_local:
             return []
 
         step_delta = self._step_delta(step)
-        aligned_start = self._floor_to_step(start_local.astimezone(MADRID_TZ), step)
-        aligned_end = end_local.astimezone(MADRID_TZ)
+        aligned_start = self._floor_to_step(start_local.astimezone(output_tz), step)
+        aligned_end = end_local.astimezone(output_tz)
 
         row_map: dict[str, OutputMeasurement] = {}
         for row in rows:
-            key = self._floor_to_step(row.datetime_cet.astimezone(MADRID_TZ), step).isoformat()
+            key = self._floor_to_step(row.datetime_cet.astimezone(output_tz), step).isoformat()
             row_map[key] = row
 
         frames: list[PlaybackFrame] = []
@@ -603,7 +612,8 @@ class PlaybackAnalyticsMixin:
                 last_observed = matched
 
             speed = matched.speed_mps if matched is not None else None
-            direction = matched.direction_deg if matched is not None else None
+            direction_from = matched.direction_deg if matched is not None else None
+            direction = wind_toward_direction_deg(direction_from)
             temperature = matched.temperature_c if matched is not None else None
             pressure = matched.pressure_hpa if matched is not None else None
             dx, dy = self._vector_components(speed, direction)
@@ -627,10 +637,11 @@ class PlaybackAnalyticsMixin:
         rows: list[OutputMeasurement],
         group_by: TimeframeGroupBy,
         simulation_params: WindFarmSimulationParams | None,
+        output_tz: ZoneInfo,
     ) -> list[TimeframeBucket]:
         groups: dict[tuple[str, datetime, datetime], list[OutputMeasurement]] = {}
         for row in rows:
-            dt = row.datetime_cet.astimezone(MADRID_TZ)
+            dt = row.datetime_cet.astimezone(STATION_LOCAL_TZ)
             if group_by == TimeframeGroupBy.HOUR:
                 start = dt.replace(minute=0, second=0, microsecond=0)
                 label = start.strftime("%Y-%m-%d %H:00")
@@ -670,14 +681,18 @@ class PlaybackAnalyticsMixin:
             speeds = [point.speed_mps for point in points if point.speed_mps is not None]
             temperatures = [point.temperature_c for point in points if point.temperature_c is not None]
             pressures = [point.pressure_hpa for point in points if point.pressure_hpa is not None]
-            directions = [point.direction_deg for point in points if point.direction_deg is not None]
+            directions = [
+                wind_toward_direction_deg(point.direction_deg)
+                for point in points
+                if point.direction_deg is not None
+            ]
             variability = round(sqrt(pvariance(speeds)), 3) if len(speeds) > 1 else None
             generation = self._estimate_generation_mwh(points, simulation_params)
             output.append(
                 TimeframeBucket(
                     label=label,
-                    start=start,
-                    end=end,
+                    start=start.astimezone(output_tz),
+                    end=end.astimezone(output_tz),
                     dataPoints=len(points),
                     avgSpeed=avg(speeds),
                     minSpeed=round(min(speeds), 3) if speeds else None,
@@ -686,7 +701,7 @@ class PlaybackAnalyticsMixin:
                     hoursAbove3mps=round(sum(1 for value in speeds if value >= 3.0) * (10.0 / 60.0), 3) if speeds else None,
                     hoursAbove5mps=round(sum(1 for value in speeds if value >= 5.0) * (10.0 / 60.0), 3) if speeds else None,
                     speedVariability=variability,
-                    dominantDirection=avg_angle_deg(directions),
+                    dominantDirection=dominant_angle_deg(directions),
                     avgTemperature=avg(temperatures),
                     minTemperature=round(min(temperatures), 3) if temperatures else None,
                     maxTemperature=round(max(temperatures), 3) if temperatures else None,
@@ -695,6 +710,15 @@ class PlaybackAnalyticsMixin:
                 )
             )
         return output
+
+    @staticmethod
+    def _resolve_output_timezone(timezone_input: str, fallback: Any = UTC) -> ZoneInfo:
+        try:
+            return ZoneInfo(timezone_input)
+        except Exception:
+            if isinstance(fallback, ZoneInfo):
+                return fallback
+            return UTC
 
     def _comparison_deltas(
         self,
@@ -850,7 +874,9 @@ class PlaybackAnalyticsMixin:
         for row in rows:
             if row.direction_deg is None or row.speed_mps is None:
                 continue
-            direction = row.direction_deg % 360
+            direction = wind_toward_direction_deg(row.direction_deg)
+            if direction is None:
+                continue
             index = int(((direction + 11.25) % 360) // 22.5)
             target = bins[index]
             speed = row.speed_mps
@@ -940,8 +966,7 @@ class PlaybackAnalyticsMixin:
     def _vector_components(speed: float | None, direction: float | None) -> tuple[float | None, float | None]:
         if speed is None or direction is None:
             return None, None
-        to_direction = (direction + 180.0) % 360.0
-        rad = radians(to_direction)
+        rad = radians(direction % 360.0)
         dx = round(speed * sin(rad), 4)
         dy = round(speed * cos(rad), 4)
         return dx, dy

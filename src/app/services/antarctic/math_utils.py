@@ -33,6 +33,28 @@ def avg_angle_deg(values: list[float | None]) -> float | None:
     return round((angle * 180.0 / 3.141592653589793) % 360, 3)
 
 
+def dominant_angle_deg(values: list[float | None]) -> float | None:
+    angles = [v for v in values if v is not None]
+    if not angles:
+        return None
+    bins = [0] * 16
+    for value in angles:
+        normalized = value % 360.0
+        index = int(((normalized + 11.25) % 360) // 22.5)
+        bins[index] += 1
+    max_count = max(bins)
+    if max_count <= 0:
+        return None
+    dominant_index = bins.index(max_count)
+    return round((dominant_index * 22.5) % 360.0, 3)
+
+
+def wind_toward_direction_deg(direction_from_deg: float | None) -> float | None:
+    if direction_from_deg is None:
+        return None
+    return round((direction_from_deg + 180.0) % 360.0, 3)
+
+
 def point_hours(aggregation: TimeAggregation) -> float:
     if aggregation == TimeAggregation.NONE:
         return 10.0 / 60.0
@@ -72,4 +94,3 @@ def expected_points(start_local: datetime, end_local: datetime, aggregation: Tim
         if count > 240:
             break
     return max(1, count)
-

@@ -158,6 +158,9 @@ frontend/src/
 `POST /api/analysis/query-jobs`
 
 - Creates a cache-first station analysis job for the selected station.
+- Request supports:
+  - `location` (IANA timezone used to interpret input datetimes and render output datetimes)
+  - `aggregation` (`none|hourly|daily|monthly`)
 - Returns planned windows, planned API calls, and frame planning metadata.
 
 `GET /api/analysis/query-jobs/{jobId}`
@@ -200,6 +203,7 @@ Query params:
   - `minOperatingPressureHpa`, `maxOperatingPressureHpa`
 
 Returns grouped timeframe buckets and comparison deltas, including estimated generation (`MWh`) when simulation parameters are provided. Generation uses density-corrected wind speed (`rho/rho_ref`) when temperature+pressure are available and enforces configured operating temperature/pressure limits.
+For daily/monthly grouping logic, station-local timezone boundaries are used to avoid day/month rollover bias.
 
 For long timeframe/compare ranges, backend fetches missing data in sequential 30-day windows (cache-first) to comply with the AEMET one-month upstream constraint.
 
@@ -211,6 +215,7 @@ For long timeframe/compare ranges, backend fetches missing data in sequential 30
 
 - Exports CSV/Parquet from cache-first retrieval.
 - Accepts long windows; backend resolves them as month-sized AEMET windows internally.
+- Supports `location` and `aggregation` (`none|hourly|daily|monthly`).
 - Used by frontend export buttons in Raw Data Tables.
 
 The following legacy endpoints are intentionally not exposed anymore:

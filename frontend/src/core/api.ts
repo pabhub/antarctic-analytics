@@ -1,6 +1,7 @@
 const authTokenStorageKey = "aemet.api_access_token";
 const authTokenExpiryStorageKey = "aemet.api_access_token_expires_at";
 const authLastActivityStorageKey = "aemet.api_last_activity_ms";
+const inputTimezoneStorageKey = "aemet.input_timezone";
 const authInactivityLimitMs = 60 * 60 * 1000;
 const authRefreshThresholdSeconds = 15 * 60;
 const authRefreshCooldownMs = 2 * 60 * 1000;
@@ -225,7 +226,14 @@ export function toApiDateTime(value: string): string {
   return value.length === 16 ? `${value}:00` : value;
 }
 
-export function formatDateTime(value: string | null, timeZone = "Europe/Madrid"): string {
+function configuredDisplayTimeZone(fallback = "UTC"): string {
+  const stored = localStorage.getItem(inputTimezoneStorageKey)?.trim();
+  if (stored && isValidTimeZone(stored)) return stored;
+  const browser = browserTimeZone();
+  return isValidTimeZone(browser) ? browser : fallback;
+}
+
+export function formatDateTime(value: string | null, timeZone = configuredDisplayTimeZone()): string {
   if (!value) return "n/a";
   const dt = new Date(value);
   if (Number.isNaN(dt.getTime())) return value;
@@ -243,7 +251,13 @@ export function formatDateTime(value: string | null, timeZone = "Europe/Madrid")
 }
 
 export function formatNumber(value: number | null | undefined, digits = 2): string {
-  return value == null ? "n/a" : value.toFixed(digits);
+  if (value == null || !Number.isFinite(value)) return "n/a";
+  const precision = Number.isFinite(digits) ? Math.min(6, Math.max(0, Math.trunc(digits))) : 2;
+  return new Intl.NumberFormat(undefined, {
+    useGrouping: true,
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  }).format(value);
 }
 
 export function browserTimeZone(): string {

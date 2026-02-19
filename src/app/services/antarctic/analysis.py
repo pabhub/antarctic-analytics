@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from statistics import fmean
+from zoneinfo import ZoneInfo
 
 from app.core.exceptions import AppValidationError
 from app.models import (
@@ -19,8 +20,15 @@ from app.models import (
     StationRole,
     TimeAggregation,
 )
-from app.services.antarctic.constants import MADRID_TZ, UTC
-from app.services.antarctic.math_utils import avg, avg_angle_deg, expected_points, percentile, point_hours
+from app.services.antarctic.constants import STATION_LOCAL_TZ, UTC
+from app.services.antarctic.math_utils import (
+    avg,
+    dominant_angle_deg,
+    expected_points,
+    percentile,
+    point_hours,
+    wind_toward_direction_deg,
+)
 from app.services.antarctic.windows import split_month_windows_covering_range
 
 logger = logging.getLogger(__name__)
@@ -111,6 +119,12 @@ class AnalysisMixin:
 
         profiles = self.get_station_profiles()
         profile_by_station = {profile.station_id: profile for profile in profiles}
+        output_tz = start_local.tzinfo or UTC
+        if timezone_input:
+            try:
+                output_tz = ZoneInfo(timezone_input)
+            except Exception:
+                output_tz = start_local.tzinfo or UTC
         series: list[StationFeasibilitySeries] = []
         for station_id in map_station_ids:
             rows = self.get_data(
@@ -119,6 +133,7 @@ class AnalysisMixin:
                 end_local=effective_end_local,
                 aggregation=aggregation,
                 selected_types=selected_types,
+                output_tz=output_tz,
             )
             profile = profile_by_station.get(station_id)
             station_name = profile.station_name if profile is not None else station_id
@@ -161,6 +176,7 @@ class AnalysisMixin:
             effectiveEnd=effective_end_local,
             effectiveEndReason=effective_end_reason,
             timezone_input=timezone_input or start_local.tzname() or "UTC",
+            timezone_output=getattr(output_tz, "key", str(output_tz)),
             aggregation=aggregation,
             mapStationIds=map_station_ids,
             notes=notes,
@@ -216,8 +232,18 @@ class AnalysisMixin:
         speeds = [row.speed_mps for row in rows if row.speed_mps is not None]
         temperatures = [row.temperature_c for row in rows if row.temperature_c is not None]
         pressures = [row.pressure_hpa for row in rows if row.pressure_hpa is not None]
-        directions = [row.direction_deg for row in rows if row.direction_deg is not None]
-        points = expected_points(start_local, end_local, aggregation)
+        directions_toward = [
+            wind_toward_direction_deg(row.direction_deg)
+            for row in rows
+            if row.direction_deg is not None
+        ]
+        if aggregation in {TimeAggregation.DAILY, TimeAggregation.MONTHLY}:
+            coverage_start = start_local.astimezone(STATION_LOCAL_TZ)
+            coverage_end = end_local.astimezone(STATION_LOCAL_TZ)
+        else:
+            coverage_start = start_local
+            coverage_end = end_local
+        points = expected_points(coverage_start, coverage_end, aggregation)
         coverage_ratio = round(min(1.0, len(rows) / float(points)), 3) if points > 0 else None
         per_point_hours = point_hours(aggregation)
 
@@ -251,7 +277,7 @@ class AnalysisMixin:
             minTemperature=round(min(temperatures), 3) if temperatures else None,
             maxTemperature=round(max(temperatures), 3) if temperatures else None,
             avgPressure=avg(pressures),
-            prevailingDirection=avg_angle_deg(directions),
+            prevailingDirection=dominant_angle_deg(directions_toward),
             estimatedWindPowerDensity=wind_power_density,
             latestObservationUtc=latest_observation_utc,
         )
@@ -266,7 +292,7 @@ class AnalysisMixin:
             stationId=station_id,
             stationName=profile.station_name,
             role=profile.role,
-            datetime=row.measured_at_utc.astimezone(MADRID_TZ),
+            datetime=row.measured_at_utc.astimezone(STATION_LOCAL_TZ),
             speed=row.speed_mps,
             direction=row.direction_deg,
             temperature=row.temperature_c,

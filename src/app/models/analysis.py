@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
-
 from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
@@ -71,7 +69,7 @@ class FeasibilitySnapshotResponse(BaseModel):
     effective_end_local: datetime = Field(alias="effectiveEnd")
     effective_end_reason: str = Field(alias="effectiveEndReason")
     timezone_input: str
-    timezone_output: Literal["Europe/Madrid"] = "Europe/Madrid"
+    timezone_output: str
     aggregation: TimeAggregation
     map_station_ids: list[str] = Field(alias="mapStationIds")
     notes: list[str]
@@ -216,7 +214,7 @@ class PlaybackResponse(BaseModel):
     requested_step: PlaybackStep = Field(alias="requestedStep")
     effective_step: PlaybackStep = Field(alias="effectiveStep")
     timezone_input: str
-    timezone_output: Literal["Europe/Madrid"] = "Europe/Madrid"
+    timezone_output: str
     start_local: datetime = Field(alias="start")
     end_local: datetime = Field(alias="end")
     frames: list[PlaybackFrame]
@@ -259,7 +257,7 @@ class TimeframeAnalyticsResponse(BaseModel):
     station_name: str = Field(alias="stationName")
     group_by: TimeframeGroupBy = Field(alias="groupBy")
     timezone_input: str
-    timezone_output: Literal["Europe/Madrid"] = "Europe/Madrid"
+    timezone_output: str
     requested_start_local: datetime = Field(alias="requestedStart")
     requested_end_local: datetime = Field(alias="requestedEnd")
     buckets: list[TimeframeBucket]

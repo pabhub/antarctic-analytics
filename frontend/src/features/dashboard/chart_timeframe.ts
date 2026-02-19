@@ -2,6 +2,7 @@ declare const Chart: any;
 
 import { TimeframeAnalyticsResponse } from "../../core/types.js";
 import { computeNumericStats } from "./chart_data.js";
+import { datasetValueAt, formatTooltipBucketTitle, formatTooltipValue } from "./chart_tooltips.js";
 
 export function renderTimeframeTrendChart(payload: TimeframeAnalyticsResponse, canvas: HTMLCanvasElement): any {
   if (!payload.buckets.length) return null;
@@ -138,6 +139,50 @@ export function renderTimeframeTrendChart(payload: TimeframeAnalyticsResponse, c
             font: { size: 11 },
             filter: (item: { text?: string }) => !(item.text ?? "").startsWith("__"),
           },
+        },
+        tooltip: {
+          filter: (context: { dataset?: { label?: string } }) => !((context.dataset?.label ?? "").startsWith("__")),
+          callbacks: {
+            title: (items: Array<{ dataIndex?: number }>) => {
+              const dataIndex = items[0]?.dataIndex ?? -1;
+              const bucket = payload.buckets[dataIndex];
+              if (!bucket) return "";
+              return formatTooltipBucketTitle(bucket.label, bucket.start, bucket.end);
+            },
+            label: (context: {
+              chart: any;
+              datasetIndex: number;
+              dataIndex: number;
+              dataset?: { label?: string };
+              parsed?: { y?: number };
+            }) => {
+              const label = context.dataset?.label ?? "";
+              if (label === "Speed range (min-max)") {
+                const minSpeed = datasetValueAt(context.chart, context.datasetIndex - 1, context.dataIndex);
+                return `Wind min-max: ${formatTooltipValue(minSpeed)} to ${formatTooltipValue(context.parsed?.y)} m/s`;
+              }
+              if (label === "Avg speed") {
+                return `Wind avg: ${formatTooltipValue(context.parsed?.y)} m/s`;
+              }
+              if (label === "P90 speed") {
+                return `Wind P90: ${formatTooltipValue(context.parsed?.y)} m/s`;
+              }
+              if (label === "Temp range (min-max)") {
+                const minTemp = datasetValueAt(context.chart, context.datasetIndex - 1, context.dataIndex);
+                return `Temp min-max: ${formatTooltipValue(minTemp)} to ${formatTooltipValue(context.parsed?.y)} C`;
+              }
+              if (label === "Avg temp") {
+                return `Temp avg: ${formatTooltipValue(context.parsed?.y)} C`;
+              }
+              if (label === "Generation (MWh)") {
+                return `Generation: ${formatTooltipValue(context.parsed?.y, 3)} MWh`;
+              }
+              return `${label}: ${formatTooltipValue(context.parsed?.y)}`;
+            },
+          },
+          padding: 8,
+          boxPadding: 2,
+          bodySpacing: 3,
         },
         subtitle: speedStats
           ? {

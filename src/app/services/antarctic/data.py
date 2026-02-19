@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 
 from app.models import (
     LatestAvailabilityResponse,
@@ -12,7 +12,7 @@ from app.models import (
     Station,
     TimeAggregation,
 )
-from app.services.antarctic.constants import MADRID_TZ, UTC
+from app.services.antarctic.constants import MADRID_TZ, STATION_LOCAL_TZ, UTC
 from app.services.antarctic.math_utils import avg, avg_angle_deg
 from app.services.antarctic.windows import next_month_start, previous_month_start, split_month_windows_covering_range, start_of_month
 
@@ -31,6 +31,7 @@ class DataMixin:
         end_local: datetime,
         aggregation: TimeAggregation,
         selected_types: list[MeasurementType],
+        output_tz: tzinfo = MADRID_TZ,
     ) -> list[OutputMeasurement]:
         station_id = self.station_id_for(station)
         self._assert_station_supported_by_antarctic_endpoint(station_id)
@@ -91,7 +92,7 @@ class DataMixin:
 
         rows = self.repository.get_measurements(station_id, start_utc, end_utc)
         transformed = self._aggregate(rows, aggregation)
-        return [self._to_output(row, selected_types) for row in transformed]
+        return [self._to_output(row, selected_types, output_tz=output_tz) for row in transformed]
 
     def refresh_data_range(
         self,
@@ -243,7 +244,7 @@ class DataMixin:
 
         grouped: dict[datetime, list[SourceMeasurement]] = defaultdict(list)
         for row in rows:
-            local_dt = row.measured_at_utc.astimezone(MADRID_TZ)
+            local_dt = row.measured_at_utc.astimezone(STATION_LOCAL_TZ)
             if aggregation == TimeAggregation.HOURLY:
                 key = local_dt.replace(minute=0, second=0, microsecond=0)
             elif aggregation == TimeAggregation.DAILY:
@@ -279,8 +280,12 @@ class DataMixin:
         return split_month_windows_covering_range(start_utc, end_utc)
 
     @staticmethod
-    def _to_output(row: SourceMeasurement, selected_types: list[MeasurementType]) -> OutputMeasurement:
-        local_dt = row.measured_at_utc.astimezone(MADRID_TZ)
+    def _to_output(
+        row: SourceMeasurement,
+        selected_types: list[MeasurementType],
+        output_tz: tzinfo,
+    ) -> OutputMeasurement:
+        local_dt = row.measured_at_utc.astimezone(output_tz)
         include_all = not selected_types
         include_temperature = include_all or MeasurementType.TEMPERATURE in selected_types
         include_pressure = include_all or MeasurementType.PRESSURE in selected_types

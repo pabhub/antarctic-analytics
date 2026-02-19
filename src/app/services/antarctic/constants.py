@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 from app.models import StationRole
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
+STATION_LOCAL_TZ = ZoneInfo("Antarctica/Palmer")
 UTC = ZoneInfo("UTC")
 
 KNOWN_ANTARCTIC_STATIONS: dict[str, dict[str, object]] = {

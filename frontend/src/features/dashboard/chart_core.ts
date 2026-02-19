@@ -2,6 +2,7 @@ declare const Chart: any;
 
 import { FeasibilitySnapshotResponse } from "../../core/types.js";
 import { aggregateRowsToEnvelopes, envelopeSummary, granularityLabel, timeAxisConfig, timeSpanDays } from "./chart_data.js";
+import { datasetValueAt, formatTooltipDateTime, formatTooltipValue } from "./chart_tooltips.js";
 
 export type CoreChartRenderResult = {
   windChart: any;
@@ -22,6 +23,7 @@ export function renderCoreCharts(
   const labels = aggregated.labels;
   const spanDays = timeSpanDays(labels);
   const granularityText = granularityLabel(aggregated.granularity);
+  const chartTimeZone = snapshot.timezone_output || snapshot.timezone_input || "UTC";
   const hasSpeedData = rows.some((row) => row.speed != null);
   const hasWeatherData = rows.some((row) => row.temperature != null || row.pressure != null);
   const hasDirectionData = rows.some((row) => row.direction != null);
@@ -86,6 +88,32 @@ export function renderCoreCharts(
               filter: (item: { text?: string }) => !(item.text ?? "").startsWith("__"),
             },
           },
+          tooltip: {
+            filter: (context: { dataset?: { label?: string } }) => !((context.dataset?.label ?? "").startsWith("__")),
+            callbacks: {
+              title: (items: Array<{ label?: string }>) => formatTooltipDateTime(items[0]?.label ?? ""),
+              label: (context: {
+                chart: any;
+                datasetIndex: number;
+                dataIndex: number;
+                dataset?: { label?: string };
+                parsed?: { y?: number };
+              }) => {
+                const label = context.dataset?.label ?? "";
+                if (label === "Speed range (min-max)") {
+                  const minSpeed = datasetValueAt(context.chart, context.datasetIndex - 1, context.dataIndex);
+                  return `Wind min-max: ${formatTooltipValue(minSpeed)} to ${formatTooltipValue(context.parsed?.y)} m/s`;
+                }
+                if (label === "Avg speed") {
+                  return `Wind avg: ${formatTooltipValue(context.parsed?.y)} m/s`;
+                }
+                return `${label}: ${formatTooltipValue(context.parsed?.y)}`;
+              },
+            },
+            padding: 8,
+            boxPadding: 2,
+            bodySpacing: 3,
+          },
           subtitle: speedStats
             ? {
                 display: true,
@@ -97,7 +125,7 @@ export function renderCoreCharts(
             : { display: false },
         },
         scales: {
-          x: timeAxisConfig(labels, spanDays),
+          x: timeAxisConfig(labels, spanDays, chartTimeZone),
           y: {
             grid: { color: "rgba(148, 163, 184, 0.22)" },
             ticks: { callback: (value: number) => `${value} m/s` },
@@ -210,10 +238,43 @@ export function renderCoreCharts(
               filter: (item: { text?: string }) => !(item.text ?? "").startsWith("__"),
             },
           },
+          tooltip: {
+            filter: (context: { dataset?: { label?: string } }) => !((context.dataset?.label ?? "").startsWith("__")),
+            callbacks: {
+              title: (items: Array<{ label?: string }>) => formatTooltipDateTime(items[0]?.label ?? ""),
+              label: (context: {
+                chart: any;
+                datasetIndex: number;
+                dataIndex: number;
+                dataset?: { label?: string };
+                parsed?: { y?: number };
+              }) => {
+                const label = context.dataset?.label ?? "";
+                if (label === "Temp range (min-max)") {
+                  const minTemp = datasetValueAt(context.chart, context.datasetIndex - 1, context.dataIndex);
+                  return `Temp min-max: ${formatTooltipValue(minTemp)} to ${formatTooltipValue(context.parsed?.y)} C`;
+                }
+                if (label === "Avg temp") {
+                  return `Temp avg: ${formatTooltipValue(context.parsed?.y)} C`;
+                }
+                if (label === "Pressure range (min-max)") {
+                  const minPressure = datasetValueAt(context.chart, context.datasetIndex - 1, context.dataIndex);
+                  return `Pressure min-max: ${formatTooltipValue(minPressure, 1)} to ${formatTooltipValue(context.parsed?.y, 1)} hPa`;
+                }
+                if (label === "Avg pressure") {
+                  return `Pressure avg: ${formatTooltipValue(context.parsed?.y, 1)} hPa`;
+                }
+                return `${label}: ${formatTooltipValue(context.parsed?.y)}`;
+              },
+            },
+            padding: 8,
+            boxPadding: 2,
+            bodySpacing: 3,
+          },
           subtitle: subtitleParts.length
             ? {
                 display: true,
-                text: `${granularityText} buckets · ${subtitleParts.join(" · ")}`,
+                text: `${granularityText} intervals · ${subtitleParts.join(" · ")}`,
                 color: "#475569",
                 padding: { bottom: 8 },
                 font: { size: 11, weight: "600" },
@@ -221,7 +282,7 @@ export function renderCoreCharts(
             : { display: false },
         },
         scales: {
-          x: timeAxisConfig(labels, spanDays),
+          x: timeAxisConfig(labels, spanDays, chartTimeZone),
           yTemp: {
             type: "linear",
             position: "left",

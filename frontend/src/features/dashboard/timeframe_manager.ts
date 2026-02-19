@@ -9,6 +9,7 @@ type TimeframeElements = {
   timeframeGroupingSelect: HTMLSelectElement;
   timeframeRunBtn: HTMLButtonElement;
   timeframeCardsEl: HTMLDivElement;
+  timeframePeriodHeaderEl: HTMLTableCellElement;
   timeframeBodyEl: HTMLTableSectionElement;
   timeframeComparisonEl: HTMLDivElement;
   timeframeGenerationEl: HTMLParagraphElement;
@@ -54,6 +55,11 @@ function isValidRange(start: string, end: string): boolean {
   const endDate = new Date(end);
   if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return false;
   return startDate < endDate;
+}
+
+function periodLabel(groupBy: "month" | "season", count: number): string {
+  if (groupBy === "month") return count === 1 ? "month" : "months";
+  return count === 1 ? "season" : "seasons";
 }
 
 export class TimeframeManager {
@@ -140,30 +146,35 @@ export class TimeframeManager {
       const simulation = this.deps.windFarmParamsFromStorage();
       let payload = await this.fetchTimeframePayload(snapshot.selectedStationId, range, simulation, false);
       if (!payload.buckets.length) {
-        this.deps.setTimeframeStatus("No buckets cached yet. Loading missing history windows...", "info");
+        this.deps.setTimeframeStatus(
+          `No ${periodLabel(range.groupBy, 2)} summaries cached yet. Loading missing history...`,
+          "info",
+        );
         payload = await this.fetchTimeframePayload(snapshot.selectedStationId, range, simulation, true);
       }
 
       if (!payload.buckets.length) {
+        this.deps.elements.timeframePeriodHeaderEl.textContent = range.groupBy === "season" ? "Season" : "Month";
         this.deps.elements.timeframeCardsEl.innerHTML = "";
         this.deps.elements.timeframeBodyEl.innerHTML = "";
         this.deps.elements.timeframeComparisonEl.innerHTML = "";
         this.deps.charts.clearTimeframeTrend();
         this.deps.elements.timeframeGenerationEl.textContent = "No observations available for the loaded history window.";
-        this.deps.setTimeframeStatus("No timeframe buckets available after loading missing history.", "error");
+        this.deps.setTimeframeStatus(
+          `No ${periodLabel(range.groupBy, 2)} available after loading missing history.`,
+          "error",
+        );
         return;
       }
 
+      this.deps.elements.timeframePeriodHeaderEl.textContent = payload.groupBy === "season" ? "Season" : "Month";
       this.deps.charts.renderTimeframeTrend(payload);
       renderTimeframeCards(this.deps.elements.timeframeCardsEl, payload);
       renderTimeframeTable(this.deps.elements.timeframeBodyEl, payload);
 
       const years = this.mergedYears(payload);
       renderComparison(this.deps.elements.timeframeComparisonEl, payload, years);
-      this.deps.setTimeframeStatus(
-        `Timeframe analysis ready: ${payload.buckets.length} buckets across ${years.length} loaded year(s), grouped by ${payload.groupBy}.`,
-        "ok",
-      );
+      this.deps.setTimeframeStatus("", "ok");
 
       const generationValues = payload.buckets
         .map((bucket) => bucket.estimatedGenerationMwh)

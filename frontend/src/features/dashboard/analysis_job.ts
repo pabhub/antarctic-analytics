@@ -80,7 +80,7 @@ export async function runAnalysisJob(ctx: DashboardActionsContext): Promise<void
   );
   const snapshotAggregation = snapshotAggregationForHistoryYears(historyYears);
   ctx.setError(null);
-  ctx.setWorkflowStage("fetch", `Loading ${historyYears}-year station history using cache-first, paced AEMET calls.`);
+  ctx.setWorkflowStage("fetch", `Loading ${historyYears}-year station history using cache-first retrieval.`);
   ctx.setSnapshotSectionsVisible(false);
   ctx.setPlaybackSectionVisible(false);
   ctx.setTimeframeSectionVisible(false);
@@ -152,7 +152,9 @@ export async function runAnalysisJob(ctx: DashboardActionsContext): Promise<void
     ctx.setQueryProgress(created);
     ctx.elements.statusEl.textContent = `Loading ${stationName} history (${historyYears} years, ${snapshotAggregation} snapshot).`;
 
-    await pollQueryJob(ctx, created.jobId);
+    const completedJobStatus = await pollQueryJob(ctx, created.jobId);
+    ctx.setQueryProgressAnalyzing(completedJobStatus.totalWindows, "Data loaded. Analyzing data...");
+    ctx.elements.statusEl.textContent = `Analyzing ${stationName} data...`;
     const snapshot = await fetchJson<FeasibilitySnapshotResponse>(`/api/analysis/query-jobs/${created.jobId}/result`);
     ctx.state.snapshotState = snapshot;
     ctx.state.lastLoadedStationId = snapshot.selectedStationId;
@@ -161,7 +163,7 @@ export async function runAnalysisJob(ctx: DashboardActionsContext): Promise<void
     const selected = snapshot.stations.find((stationItem) => stationItem.stationId === snapshot.selectedStationId);
     const hasSelectedRows = (selected?.data.length ?? 0) > 0;
     if (!hasSelectedRows) {
-      ctx.setError("No rows available for the selected station in the loaded baseline.");
+      ctx.setError("No data points available for the selected station in the loaded baseline.");
       ctx.elements.statusEl.textContent = "No baseline data available for selected station.";
       ctx.elements.queryProgressWrap.classList.remove("show");
       return;
@@ -196,6 +198,7 @@ export async function runAnalysisJob(ctx: DashboardActionsContext): Promise<void
       ctx.setError(error instanceof Error ? error.message : "Unable to run timeframe analysis.");
     }
     ctx.elements.statusEl.textContent = `Analysis ready for ${stationDisplayName(snapshot.selectedStationId, snapshot.selectedStationName)}.`;
+    ctx.showToast(`Analysis ready for ${stationDisplayName(snapshot.selectedStationId, snapshot.selectedStationName)}.`);
     ctx.elements.queryProgressWrap.classList.remove("show");
     ctx.setResultsSkeletonVisible(false);
     ctx.setWorkflowStage("explore", "Analysis ready.");

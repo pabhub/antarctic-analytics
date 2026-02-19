@@ -27,7 +27,7 @@ import {
   selectedPlaybackDelayMs as selectedPlaybackDelayMsControl,
 } from "./features/dashboard/playback_controls.js";
 import { PlaybackManager } from "./features/dashboard/playback_manager.js";
-import { setQueryProgress as setQueryProgressUi } from "./features/dashboard/progress.js";
+import { setQueryProgress as setQueryProgressUi, setQueryProgressAnalyzing as setQueryProgressAnalyzingUi } from "./features/dashboard/progress.js";
 import {
   setError as setErrorUi,
   setLoading as setLoadingUi,
@@ -64,6 +64,8 @@ const charts = new DashboardCharts(
 );
 
 const configuredInputTimeZone = (): string => configuredInputTimeZoneSetting("UTC");
+const TOAST_AUTO_HIDE_MS = 4500;
+let toastTimerId: number | null = null;
 
 function selectedHistoryYears(): number {
   const parsed = Number.parseInt(dom.historyYearsSelect.value, 10);
@@ -98,7 +100,7 @@ function setPlaybackSectionVisible(visible: boolean): void {
 }
 
 function setTimeframeSectionVisible(visible: boolean): void {
-  setTimeframeSectionVisibleUi(dom.timeframeCardEl, visible);
+  setTimeframeSectionVisibleUi(dom.timeframeSectionEl, visible);
 }
 
 function setSnapshotSectionsVisible(visible: boolean): void {
@@ -108,7 +110,7 @@ function setSnapshotSectionsVisible(visible: boolean): void {
     dom.rawCardEl,
     dom.mapPlaybackShellEl,
     dom.playbackProgressWrap,
-    dom.timeframeCardEl,
+    dom.timeframeSectionEl,
     visible,
   );
 }
@@ -153,12 +155,15 @@ function setPlaybackButtonVisual(playing: boolean): void {
 }
 
 function setTimeframeStatus(message: string, tone: "info" | "ok" | "error" = "info"): void {
-  dom.timeframeStatusEl.textContent = message;
-  dom.timeframeStatusEl.classList.remove("timeframe-status-info", "timeframe-status-ok", "timeframe-status-error");
-  if (tone === "ok") {
-    dom.timeframeStatusEl.classList.add("timeframe-status-ok");
+  const show = tone !== "ok" && message.trim().length > 0;
+  if (!show) {
+    dom.timeframeStatusEl.textContent = "";
+    dom.timeframeStatusEl.classList.add("hidden");
     return;
   }
+  dom.timeframeStatusEl.classList.remove("hidden");
+  dom.timeframeStatusEl.textContent = message;
+  dom.timeframeStatusEl.classList.remove("timeframe-status-info", "timeframe-status-ok", "timeframe-status-error");
   if (tone === "error") {
     dom.timeframeStatusEl.classList.add("timeframe-status-error");
     return;
@@ -175,11 +180,43 @@ function setQueryProgress(status: QueryJobCreateResponse | QueryJobStatusRespons
   );
 }
 
+function setQueryProgressAnalyzing(totalMonths: number, message: string): void {
+  setQueryProgressAnalyzingUi(
+    dom.queryProgressWrap,
+    dom.queryProgressBar,
+    dom.queryProgressText,
+    totalMonths,
+    message,
+  );
+}
+
+function hideToast(): void {
+  if (toastTimerId != null) {
+    window.clearTimeout(toastTimerId);
+    toastTimerId = null;
+  }
+  dom.toastEl.classList.add("hidden");
+}
+
+function showToast(message: string): void {
+  if (toastTimerId != null) {
+    window.clearTimeout(toastTimerId);
+    toastTimerId = null;
+  }
+  dom.toastTextEl.textContent = message;
+  dom.toastEl.classList.remove("hidden");
+  toastTimerId = window.setTimeout(() => {
+    dom.toastEl.classList.add("hidden");
+    toastTimerId = null;
+  }, TOAST_AUTO_HIDE_MS);
+}
+
 const timeframeManager = new TimeframeManager({
   elements: {
     timeframeGroupingSelect: dom.timeframeGroupingSelect,
     timeframeRunBtn: dom.timeframeRunBtn,
     timeframeCardsEl: dom.timeframeCardsEl,
+    timeframePeriodHeaderEl: dom.timeframePeriodHeaderEl,
     timeframeBodyEl: dom.timeframeBodyEl,
     timeframeComparisonEl: dom.timeframeComparisonEl,
     timeframeGenerationEl: dom.timeframeGenerationEl,
@@ -236,6 +273,8 @@ const actionsContext = {
     statusEl: dom.statusEl,
     playbackProgressWrap: dom.playbackProgressWrap,
     queryProgressWrap: dom.queryProgressWrap,
+    queryProgressBar: dom.queryProgressBar,
+    queryProgressText: dom.queryProgressText,
     playbackWindowLabelEl: dom.playbackWindowLabelEl,
     timeframeCardsEl: dom.timeframeCardsEl,
     timeframeBodyEl: dom.timeframeBodyEl,
@@ -265,6 +304,8 @@ const actionsContext = {
   setLoading,
   setPlaybackButtonVisual,
   setQueryProgress,
+  setQueryProgressAnalyzing,
+  showToast,
 };
 onMapStationClick = (stationId: string) => {
   void handleMapStationClick(actionsContext, stationId);
@@ -318,6 +359,7 @@ dom.authLogoutBtn.addEventListener("click", () => {
   clearAuthToken();
   clearAuthUser();
   refreshAuthBadge();
+  hideToast();
   redirectToLogin("/login");
 });
 
@@ -339,10 +381,12 @@ dom.toggleTablesButton.addEventListener("click", () => {
   const collapsed = !dom.tablesPanelEl.classList.contains("collapsed");
   setTablesCollapsedUi(dom.tablesPanelEl, dom.toggleTablesButton, collapsed);
 });
+dom.toastCloseBtn.addEventListener("click", hideToast);
 
 playbackManager.configureEvents();
 setTablesCollapsedUi(dom.tablesPanelEl, dom.toggleTablesButton, true);
 refreshAuthBadge();
+hideToast();
 setSnapshotSectionsVisible(false);
 if (hasValidAuthToken()) {
   setWorkflowStage("scope", "Authenticated. Loading station bootstrap.");

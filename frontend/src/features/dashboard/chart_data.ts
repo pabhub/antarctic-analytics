@@ -29,22 +29,28 @@ export function timeSpanDays(labels: string[]): number {
   return Math.max(0, (end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
 }
 
-function formatAxisDateLabel(value: string, spanDays: number): string {
+function formatAxisDateLabel(value: string, spanDays: number, timeZone: string): string {
   const date = parseIsoDate(value);
   if (!date) return "";
   if (spanDays > 540) {
-    return new Intl.DateTimeFormat("en-GB", { month: "short", year: "2-digit" }).format(date);
+    return new Intl.DateTimeFormat("en-GB", { month: "short", year: "2-digit", timeZone }).format(date);
   }
   if (spanDays > 120) {
-    return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "2-digit" }).format(date);
+    return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "2-digit", timeZone }).format(date);
   }
   if (spanDays > 14) {
-    return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" }).format(date);
+    return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", timeZone }).format(date);
   }
-  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  }).format(date);
 }
 
-export function timeAxisConfig(labels: string[], spanDays: number): Record<string, unknown> {
+export function timeAxisConfig(labels: string[], spanDays: number, timeZone: string): Record<string, unknown> {
   const maxTicksLimit = spanDays > 540 ? 9 : spanDays > 180 ? 10 : spanDays > 30 ? 12 : 16;
   const dense = labels.length > maxTicksLimit * 3;
   return {
@@ -58,9 +64,9 @@ export function timeAxisConfig(labels: string[], spanDays: number): Record<strin
       minRotation: 0,
       padding: 6,
       color: "#475569",
-      callback: (_: unknown, index: number) => formatAxisDateLabel(labels[index] ?? "", spanDays),
+      callback: (_: unknown, index: number) => formatAxisDateLabel(labels[index] ?? "", spanDays, timeZone),
     },
-    title: { display: true, text: "Time (Europe/Madrid)", color: "#334155", font: { size: 11, weight: "700" } },
+    title: { display: true, text: `Time (${timeZone})`, color: "#334155", font: { size: 11, weight: "700" } },
   };
 }
 

@@ -1,5 +1,11 @@
 import { QueryJobCreateResponse, QueryJobStatusResponse } from "../../core/types.js";
 
+function normalizeMessage(message: string): string {
+  return message
+    .replace(/\bwindow\b/gi, "month")
+    .replace(/\bwindows\b/gi, "months");
+}
+
 export function setQueryProgress(
   queryProgressWrap: HTMLDivElement,
   queryProgressBar: HTMLProgressElement,
@@ -7,9 +13,25 @@ export function setQueryProgress(
   status: QueryJobCreateResponse | QueryJobStatusResponse,
 ): void {
   queryProgressWrap.classList.add("show");
-  queryProgressBar.max = Math.max(1, status.totalApiCallsPlanned);
-  queryProgressBar.value = Math.min(status.totalApiCallsPlanned, status.completedApiCalls);
-  queryProgressText.textContent = `${status.message} API calls: ${status.completedApiCalls}/${status.totalApiCallsPlanned}. Windows cached ${status.cachedWindows}/${status.totalWindows}.`;
+  const completedMonths = "completedWindows" in status ? status.completedWindows : status.cachedWindows;
+  queryProgressBar.max = Math.max(1, status.totalWindows);
+  queryProgressBar.value = Math.min(status.totalWindows, completedMonths);
+  const monthLabel = status.totalWindows === 1 ? "month" : "months";
+  queryProgressText.textContent =
+    `${normalizeMessage(status.message)} Loaded ${completedMonths}/${status.totalWindows} ${monthLabel} (${status.cachedWindows} cached).`;
+}
+
+export function setQueryProgressAnalyzing(
+  queryProgressWrap: HTMLDivElement,
+  queryProgressBar: HTMLProgressElement,
+  queryProgressText: HTMLParagraphElement,
+  totalMonths: number,
+  message: string,
+): void {
+  queryProgressWrap.classList.add("show");
+  queryProgressBar.max = Math.max(1, totalMonths);
+  queryProgressBar.value = Math.max(1, totalMonths);
+  queryProgressText.textContent = message;
 }
 
 export function setPlaybackProgress(

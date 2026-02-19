@@ -84,7 +84,12 @@ function summarize(payload: TimeframeAnalyticsResponse): SummaryStats {
 
 function metricValue(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "-";
-  return value.toFixed(digits);
+  return formatNumber(value, digits);
+}
+
+function periodWord(groupBy: "month" | "season", count: number): string {
+  if (groupBy === "month") return count === 1 ? "month" : "months";
+  return count === 1 ? "season" : "seasons";
 }
 
 const MONTH_LABELS: Record<string, string> = {
@@ -250,9 +255,11 @@ function decisionFromYearSummaries(
 
   const qualityCommentParts: string[] = [];
   qualityCommentParts.push(
-    `Coverage across loaded years averages ${(avgCoverage * 100).toFixed(1)}% of expected ${groupBy} buckets.`,
+    `Coverage across loaded years averages ${(avgCoverage * 100).toFixed(1)}% of expected ${periodWord(groupBy, 2)}.`,
   );
-  qualityCommentParts.push(`Years with strong bucket coverage: ${coverageStrongYears}/${yearSummaries.length}.`);
+  qualityCommentParts.push(
+    `Years with strong ${periodWord(groupBy, 2)} coverage: ${coverageStrongYears}/${yearSummaries.length}.`,
+  );
   qualityCommentParts.push(`Missing year/${groupBy} cells are displayed as "-".`);
 
   const generationYears = yearSummaries.filter((year) => year.generationMwh != null && Number.isFinite(year.generationMwh)).length;
@@ -283,18 +290,21 @@ export function renderTimeframeCards(
   payload: TimeframeAnalyticsResponse,
 ): void {
   container.innerHTML = "";
+  const groupBy = payload.groupBy === "season" ? "season" : "month";
   const summary = summarize(payload);
   const dominant = payload.windRose.dominantSector ?? "n/a";
   const concentration = payload.windRose.directionalConcentration == null
     ? "n/a"
     : `${(payload.windRose.directionalConcentration * 100).toFixed(1)}%`;
+  const periodLabel = periodWord(groupBy, summary.bucketCount);
+  const groupingLabel = groupBy === "month" ? "Monthly" : "Seasonal";
 
   const cards = [
     `
       <h4>Selected Scope</h4>
       <p>${formatDateTime(payload.requestedStart)} → ${formatDateTime(payload.requestedEnd)}</p>
-      <p>Grouping: ${payload.groupBy} · Buckets: ${summary.bucketCount} · Rows: ${summary.dataPoints}</p>
-      <p>Dominant direction: ${dominant} · Concentration: ${concentration}</p>
+      <p>Grouping: ${groupingLabel} · ${periodLabel.replace(/^./, (value) => value.toUpperCase())}: ${formatNumber(summary.bucketCount, 0)} · Data Points: ${formatNumber(summary.dataPoints, 0)}</p>
+      <p>Dominant heading (toward): ${dominant} · Concentration: ${concentration}</p>
     `,
     `
       <h4>Wind Performance</h4>
@@ -329,7 +339,7 @@ export function renderTimeframeTable(
       <td>${bucket.label}</td>
       <td>${formatDateTime(bucket.start)}</td>
       <td>${formatDateTime(bucket.end)}</td>
-      <td>${bucket.dataPoints}</td>
+      <td>${formatNumber(bucket.dataPoints, 0)}</td>
       <td>${formatNumber(bucket.minSpeed)}</td>
       <td>${formatNumber(bucket.avgSpeed)}</td>
       <td>${formatNumber(bucket.maxSpeed)}</td>
@@ -438,12 +448,12 @@ export function renderComparison(
     <h4>${groupBy === "month" ? "Monthly" : "Seasonal"} comparison across loaded years</h4>
     <p class="muted">
       Loaded years: ${years.join(", ")}.
-      Missing year/bucket combinations are shown as "-".
+      Missing year/${groupBy} combinations are shown as "-".
     </p>
     <section class="comparison-decision">
       <div class="comparison-decision-head">
         <span class="${decision.badgeClass}">${decision.badgeText}</span>
-        <p class="muted">Decision comments are derived from loaded-year ${groupBy} buckets and current simulation settings.</p>
+        <p class="muted">Decision comments are derived from loaded-year ${periodWord(groupBy, 2)} and current simulation settings.</p>
       </div>
       <div class="comparison-decision-grid">
         <article class="comparison-decision-tile">
@@ -465,7 +475,7 @@ export function renderComparison(
         <thead>
           <tr>
             <th>Year</th>
-            <th>Coverage</th>
+            <th>Coverage (${groupBy === "month" ? "months" : "seasons"})</th>
             <th>Avg Speed</th>
             <th>P90 Speed</th>
             <th>Hours ≥ 5</th>

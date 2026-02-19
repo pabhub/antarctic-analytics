@@ -15,8 +15,8 @@ export function setPlaybackSectionVisible(
   if (!visible) playbackProgressWrap.classList.remove("show");
 }
 
-export function setTimeframeSectionVisible(timeframeCardEl: HTMLDivElement, visible: boolean): void {
-  toggleSection(timeframeCardEl, visible);
+export function setTimeframeSectionVisible(timeframeSectionEl: HTMLDivElement, visible: boolean): void {
+  toggleSection(timeframeSectionEl, visible);
 }
 
 export function setSnapshotSectionsVisible(
@@ -25,7 +25,7 @@ export function setSnapshotSectionsVisible(
   rawCardEl: HTMLDivElement,
   mapPlaybackShellEl: HTMLDivElement,
   playbackProgressWrap: HTMLDivElement,
-  timeframeCardEl: HTMLDivElement,
+  timeframeSectionEl: HTMLDivElement,
   visible: boolean,
 ): void {
   toggleSection(decisionCardEl, visible);
@@ -33,7 +33,7 @@ export function setSnapshotSectionsVisible(
   toggleSection(rawCardEl, visible);
   if (!visible) {
     setPlaybackSectionVisible(mapPlaybackShellEl, playbackProgressWrap, false);
-    setTimeframeSectionVisible(timeframeCardEl, false);
+    setTimeframeSectionVisible(timeframeSectionEl, false);
   }
 }
 
