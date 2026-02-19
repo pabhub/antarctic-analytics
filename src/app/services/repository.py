@@ -186,7 +186,10 @@ class SQLiteRepository:
 
     def _initialize(self) -> None:
         with self._write_connection() as conn:
-            conn.execute("PRAGMA journal_mode = WAL")
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+            except Exception:
+                pass  # Turso manages WAL internally
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS measurements (

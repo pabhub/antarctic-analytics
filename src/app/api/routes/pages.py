@@ -52,9 +52,17 @@ def get_debug_logs():
         info["auth_token_present"] = bool(auth_token)
         info["auth_token_length"] = len(auth_token)
         client = TursoHttpClient(settings.database_url, auth_token=auth_token)
-        cursor = client.execute("SELECT COUNT(*) as cnt FROM measurements")
+        # Basic connectivity test
+        cursor = client.execute("SELECT 1 as ok")
         row = cursor.fetchone()
-        info["measurement_count"] = row["cnt"] if row else "no rows"
+        info["connection_ok"] = row["ok"] == 1 if row else False
+        # Try querying the measurements table (may not exist on fresh databases)
+        try:
+            cursor = client.execute("SELECT COUNT(*) as cnt FROM measurements")
+            row = cursor.fetchone()
+            info["measurement_count"] = row["cnt"] if row else "no rows"
+        except Exception:
+            info["measurement_count"] = "table not created yet (will auto-create on first request)"
         info["turso_ok"] = True
         client.close()
     except Exception as e:
