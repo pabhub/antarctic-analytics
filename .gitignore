@@ -16,3 +16,5 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 *.db
+.vercel
+.env*.local

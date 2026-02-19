@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 import os
 import shutil
 import sqlite3
 import json
 import logging
-import gzip
+import httpx
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,59 +13,34 @@ from app.models import SourceMeasurement, StationCatalogItem
 
 logger = logging.getLogger(__name__)
 
-# Candidate locations where a compressed pre-built cache DB may be bundled into the deploy.
-_BUNDLED_DB_CANDIDATES = [
-    Path(__file__).resolve().parent / "aemet_cache.db.gz",  # Same directory as this module
-    Path.cwd() / "aemet_cache.db.gz",                        # Vercel root execution directory
-    Path(__file__).resolve().parents[3] / "aemet_cache.db.gz", # Old root path as fallback
-]
 
-
-def _seed_from_bundled(target_path: str) -> None:
-    """Decompress a bundled read-only cache DB to the writable target path on Vercel."""
+def _seed_from_blob_storage(target_path: str) -> None:
+    """Download the pre-built cache DB from Vercel Blob Storage to the writable target path on Vercel."""
     if not (os.getenv("VERCEL") or os.getenv("VERCEL_ENV")):
         return
     if os.path.exists(target_path):
         return
         
-    logger.error("SEED_DEBUG: Starting cache DB seed. cwd=%s target=%s", os.getcwd(), target_path)
+    blob_url = os.environ.get("CACHE_DB_BLOB_URL")
+    if not blob_url:
+        logger.warning("Vercel cold start but CACHE_DB_BLOB_URL is missing. Starting with an empty cache.")
+        return
+        
+    logger.info("SEED: Starting cache DB download. target=%s", target_path)
     
-    for candidate in _BUNDLED_DB_CANDIDATES:
-        exists = candidate.exists()
-        is_file = candidate.is_file()
-        logger.error("SEED_DEBUG: Checking candidate %s exists=%s is_file=%s", candidate, exists, is_file)
-        if not is_file:
-            continue
-        try:
-            logger.error("SEED_DEBUG: Decompressing %s to %s", candidate, target_path)
-            with gzip.open(candidate, "rb") as f_in:
-                with open(target_path, "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-            
-            logger.error("SEED_DEBUG: Success! File size is %d bytes", os.path.getsize(target_path))
-            return
-        except Exception as exc:
-            logger.error("SEED_DEBUG: Failed to decompress bundled DB %s: %s", candidate, str(exc))
-            if os.path.exists(target_path):
-                os.remove(target_path)
-                
-    logger.error("SEED_DEBUG: Specific candidates failed. Falling back to recursive search in %s", os.getcwd())
-    for root, _, files in os.walk(os.getcwd()):
-        if "aemet_cache.db.gz" in files:
-            found_path = Path(root) / "aemet_cache.db.gz"
-            logger.error("SEED_DEBUG: Found fallback candidate at %s", found_path)
-            try:
-                with gzip.open(found_path, "rb") as f_in:
-                    with open(target_path, "wb") as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-                logger.error("SEED_DEBUG: Success from fallback! File size is %d bytes", os.path.getsize(target_path))
-                return
-            except Exception as exc:
-                logger.error("SEED_DEBUG: Failed fallback %s: %s", found_path, str(exc))
-                if os.path.exists(target_path):
-                    os.remove(target_path)
-
-    logger.error("SEED_DEBUG: All candidates and fallback search failed.")
+    try:
+        # Stream the DB to disk to avoid loading 150MB into memory
+        with httpx.stream("GET", blob_url, follow_redirects=True, timeout=60.0) as response:
+            response.raise_for_status()
+            with open(target_path, "wb") as f_out:
+                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                    f_out.write(chunk)
+        
+        logger.info("SEED: Success! File size is %d bytes", os.path.getsize(target_path))
+    except Exception as exc:
+        logger.error("SEED: Failed to download DB from Blob Storage: %s", str(exc))
+        if os.path.exists(target_path):
+            os.remove(target_path)
 
 
 class SQLiteRepository:
@@ -95,7 +68,7 @@ class SQLiteRepository:
             self.db_path = normalized_path or "aemet_cache.db"
 
         logger.info("Initializing SQLite repository path=%s", self.db_path)
-        _seed_from_bundled(self.db_path)
+        _seed_from_blob_storage(self.db_path)
         try:
             self._initialize()
         except sqlite3.OperationalError as exc:
