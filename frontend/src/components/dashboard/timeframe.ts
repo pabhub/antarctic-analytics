@@ -1,7 +1,7 @@
 export function timeframeAnalysisTemplate(): string {
   return `
     <article id="timeframe-card" class="card hidden">
-      <h2>Loaded Years Comparison</h2>
+      <h2>Loaded Years Comparison & Decision</h2>
       <div class="timeframe-controls">
         <label>Compare by
           <select id="timeframe-grouping">

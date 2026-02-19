@@ -11,26 +11,34 @@ This app is intentionally constrained to AEMET Antarctic stations and the wind-f
 The backend now follows a `src` package structure with clear boundaries:
 
 ```text
-src/app/
-├── main.py                     # FastAPI entry point (wiring)
-├── core/
-│   ├── config.py               # settings/env loading
-│   ├── exceptions.py           # custom exceptions
-│   └── logging.py              # logging setup
-├── models/
-│   ├── station.py              # station/catalog/profile models
-│   ├── measurement.py          # time-series/query response models
-│   └── analysis.py             # feasibility snapshot models
-├── services/
-│   ├── aemet_client.py         # upstream API client
-│   └── repository.py           # SQLite persistence
-│   ├── antarctic_service.py    # service facade
-│   └── antarctic/              # split domain logic (stations/data/analysis)
-├── api/
-│   ├── dependencies.py         # DI and compliance header helpers
-│   └── routes/                 # split HTTP route modules (pages/metadata/analysis/data)
-└── utils/
-    └── dates.py                # generic date-window helpers
+src/
+├── main.py                     # deployment shim entrypoint (re-exports app.main:app)
+└── app/
+    ├── main.py                 # FastAPI app wiring
+    ├── core/
+    │   ├── config.py           # settings/env loading
+    │   ├── exceptions.py       # custom exceptions
+    │   └── logging.py          # logging setup
+    ├── models/
+    │   ├── station.py          # station/catalog/profile models
+    │   ├── measurement.py      # time-series/query response models
+    │   └── analysis.py         # feasibility snapshot models
+    ├── services/
+    │   ├── aemet_client.py     # upstream API client
+    │   └── repository.py       # SQLite persistence
+    │   ├── antarctic_service.py# service facade
+    │   └── antarctic/          # split domain logic (stations/data/analysis)
+    ├── api/
+    │   ├── dependencies.py     # DI and compliance header helpers
+    │   └── routes/             # split HTTP route modules (pages/metadata/analysis/data)
+    └── utils/
+        └── dates.py            # generic date-window helpers
+```
+
+A root `main.py` shim is also included for platforms that only auto-detect top-level entrypoints.
+
+```text
+main.py                         # root deployment shim (re-exports app.main:app)
 ```
 
 Frontend files are also split by responsibility:

@@ -64,17 +64,16 @@ export function stationWorkspaceTemplate(): string {
               <option value="120x">120x</option>
             </select>
           </label>
+          <div class="overlay-toggles playback-toggles-inline">
+            <label class="inline-label"><input id="overlay-temperature" type="checkbox" />Temperature halo</label>
+            <label class="inline-label"><input id="overlay-pressure" type="checkbox" />Pressure ring</label>
+            <label class="inline-label"><input id="overlay-trail" type="checkbox" checked />Direction trail</label>
+          </div>
         </div>
         <input id="playback-slider" type="range" min="0" max="0" value="0" />
-        <p id="playback-status" class="muted"></p>
+        <p id="playback-status" class="muted playback-status-line" title=""></p>
 
-        <div class="overlay-toggles">
-          <label class="inline-label"><input id="overlay-temperature" type="checkbox" />Temperature halo</label>
-          <label class="inline-label"><input id="overlay-pressure" type="checkbox" />Pressure ring</label>
-          <label class="inline-label"><input id="overlay-trail" type="checkbox" checked />Direction trail</label>
-        </div>
-
-        <div id="playback-progress-wrap" class="progress-wrap">
+        <div id="playback-progress-wrap" class="progress-wrap playback-progress-wrap">
           <progress id="playback-progress-bar" value="0" max="1"></progress>
           <p id="playback-progress-text" class="muted">Frames 0/0.</p>
         </div>

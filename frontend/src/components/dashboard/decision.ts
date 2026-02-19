@@ -2,12 +2,13 @@ export function decisionSnapshotTemplate(): string {
   return `
     <article id="decision-card" class="card hidden">
       <div class="section-head">
-        <h2>Decision Snapshot</h2>
+        <h2>Current Window Snapshot</h2>
         <div class="decision-head-right">
           <p id="decision-updated" class="muted"></p>
           <span id="decision-badge" class="decision-badge">Screening</span>
         </div>
       </div>
+      <p class="muted">This card summarizes the currently loaded window. Interannual decision comments are in Loaded Years Comparison.</p>
       <section id="metrics-grid" class="metrics-grid"></section>
       <div class="decision-grid">
         <article class="decision-tile">

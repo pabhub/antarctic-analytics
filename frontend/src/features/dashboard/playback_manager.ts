@@ -46,7 +46,9 @@ export class PlaybackManager {
       this.deps.elements.playbackSlider.max = String(Math.max(0, total - 1));
       this.deps.elements.playbackSlider.value = String(index);
       if (!frame) return;
-      this.deps.elements.playbackStatusEl.textContent = `${formatDateTime(frame.datetime)} · Speed ${formatNumber(frame.speed)} m/s · Direction ${formatNumber(frame.direction)}º · Temp ${formatNumber(frame.temperature)} ºC · Pressure ${formatNumber(frame.pressure)} hPa · ${frame.qualityFlag}`;
+      const frameStatusText = `${formatDateTime(frame.datetime)} · Speed ${formatNumber(frame.speed)} m/s · Direction ${formatNumber(frame.direction)}º · Temp ${formatNumber(frame.temperature)} ºC · Pressure ${formatNumber(frame.pressure)} hPa · ${frame.qualityFlag}`;
+      this.deps.elements.playbackStatusEl.textContent = frameStatusText;
+      this.deps.elements.playbackStatusEl.title = frameStatusText;
       renderPlaybackOverlay(this.deps.overlayController, frame, {
         showDirectionTrail: this.deps.elements.overlayTrailInput.checked,
         showTemperatureHalo: this.deps.elements.overlayTempInput.checked,
@@ -106,6 +108,7 @@ export class PlaybackManager {
       clearPlaybackTrail(this.deps.overlayController);
       this.deps.elements.playbackWindowLabelEl.textContent = "";
       this.deps.elements.playbackStatusEl.textContent = "Playback frames are not available for this timeframe.";
+      this.deps.elements.playbackStatusEl.title = "Playback frames are not available for this timeframe.";
       this.deps.updateChartVisibility(rows, rows.some((row) => row.direction != null));
       return;
     }
@@ -129,13 +132,17 @@ export class PlaybackManager {
         ? "n/a"
         : `${(payload.windRose.directionalConcentration * 100).toFixed(1)}%`;
     if (payload.windRose.dominantSector == null) {
-      this.deps.elements.playbackStatusEl.textContent =
+      const noDirectionText =
         "Direction values are not available for this timeframe. Speed, temperature, and pressure remain available.";
+      this.deps.elements.playbackStatusEl.textContent = noDirectionText;
+      this.deps.elements.playbackStatusEl.title = noDirectionText;
       return;
     }
-    this.deps.elements.playbackStatusEl.textContent =
+    const playbackSummaryText =
       `Dominant direction: ${payload.windRose.dominantSector} · Concentration: ${concentration} · Calm share: ${
         payload.windRose.calmShare == null ? "n/a" : `${(payload.windRose.calmShare * 100).toFixed(1)}%`
       }`;
+    this.deps.elements.playbackStatusEl.textContent = playbackSummaryText;
+    this.deps.elements.playbackStatusEl.title = playbackSummaryText;
   }
 }

@@ -66,44 +66,52 @@ export function renderDecisionGuidance(
   const avgSpeed = summary.avgSpeed;
   const p90Speed = summary.p90Speed;
   const coverage = summary.coverageRatio;
-  const variability = summary.hoursAbove5mps;
+  const hoursAbove5 = summary.hoursAbove5mps;
   const latestUtc = summary.latestObservationUtc;
+  const prevailingDirection = summary.prevailingDirection;
 
-  let windSignal = "Wind signal is inconclusive. Extend history and review seasonal behavior.";
+  let windSignal = "Wind signal is inconclusive in the currently loaded window. Review the loaded-years comparison to validate interannual consistency.";
   let badgeClass = "decision-badge moderate";
   let badgeText = "Moderate signal";
   if (avgSpeed != null && p90Speed != null) {
     if (avgSpeed >= 7.0 && p90Speed >= 10.0) {
-      windSignal = "Strong wind resource signal. Proceed to higher-resolution engineering yield assessment.";
+      windSignal = `Strong current-window signal: avg ${avgSpeed.toFixed(2)} m/s, P90 ${p90Speed.toFixed(2)} m/s${prevailingDirection != null ? `, prevailing ${prevailingDirection.toFixed(0)}°` : ""}.`;
       badgeClass = "decision-badge strong";
       badgeText = "Strong signal";
     } else if (avgSpeed >= 5.0 && p90Speed >= 8.0) {
-      windSignal = "Moderate wind resource. Validate with longer history and wake/turbulence assumptions.";
+      windSignal = `Moderate current-window signal: avg ${avgSpeed.toFixed(2)} m/s, P90 ${p90Speed.toFixed(2)} m/s${prevailingDirection != null ? `, prevailing ${prevailingDirection.toFixed(0)}°` : ""}.`;
     } else {
-      windSignal = "Low-to-moderate wind resource in current window. Feasibility is uncertain for utility-scale output.";
+      windSignal = `Low-to-moderate current-window signal: avg ${formatNumber(avgSpeed)} m/s, P90 ${formatNumber(p90Speed)} m/s${prevailingDirection != null ? `, prevailing ${prevailingDirection.toFixed(0)}°` : ""}.`;
       badgeClass = "decision-badge low";
       badgeText = "Low signal";
     }
   }
 
-  let quality = "Coverage and data quality require review.";
+  let quality = `Coverage and data quality require review (${summary.dataPoints} rows).`;
   if (coverage != null) {
-    if (coverage >= 0.9) quality = `Coverage is high (${(coverage * 100).toFixed(1)}%).`;
-    else if (coverage >= 0.7) quality = `Coverage is partial (${(coverage * 100).toFixed(1)}%).`;
-    else quality = `Coverage is low (${(coverage * 100).toFixed(1)}%). Extend backfill before decisions.`;
+    if (coverage >= 0.9) {
+      quality = `Coverage is high (${(coverage * 100).toFixed(1)}%, ${summary.dataPoints} rows) and suitable for first-pass screening.`;
+    } else if (coverage >= 0.7) {
+      quality = `Coverage is partial (${(coverage * 100).toFixed(1)}%, ${summary.dataPoints} rows). Use loaded-years comparison before investment decisions.`;
+    } else {
+      quality = `Coverage is low (${(coverage * 100).toFixed(1)}%, ${summary.dataPoints} rows). Extend backfill before decisions.`;
+    }
   }
 
   const riskParts: string[] = [];
-  if (variability != null) riskParts.push(`Hours above 5 m/s: ${variability.toFixed(1)}.`);
+  if (hoursAbove5 != null) riskParts.push(`Hours above 5 m/s: ${hoursAbove5.toFixed(1)}.`);
   if (summary.maxSpeed != null) riskParts.push(`Observed max speed: ${summary.maxSpeed.toFixed(2)} m/s.`);
   if (summary.minTemperature != null || summary.maxTemperature != null) {
     riskParts.push(`Temperature range: ${formatNumber(summary.minTemperature)} to ${formatNumber(summary.maxTemperature)} ºC.`);
   }
-  if (riskParts.length === 0) riskParts.push("Insufficient extremes for operational risk hints in this window.");
+  if (summary.avgPressure != null) {
+    riskParts.push(`Avg pressure: ${summary.avgPressure.toFixed(1)} hPa.`);
+  }
+  riskParts.push("For go/no-go confidence, rely on the Loaded Years Comparison section for interannual spread.");
 
   decisionBadgeEl.className = badgeClass;
   decisionBadgeEl.textContent = badgeText;
-  decisionUpdatedEl.textContent = `Snapshot: ${summary.dataPoints} rows · Latest UTC ${formatDateTime(latestUtc, "UTC")}.`;
+  decisionUpdatedEl.textContent = `Current window snapshot · ${summary.dataPoints} rows · Latest UTC ${formatDateTime(latestUtc, "UTC")}.`;
   decisionWindEl.textContent = windSignal;
   decisionQualityEl.textContent = quality;
   decisionRiskEl.textContent = riskParts.join(" ");
