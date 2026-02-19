@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TimeAggregation(str, Enum):
@@ -19,6 +20,13 @@ class MeasurementType(str, Enum):
     DIRECTION = "direction"
 
 
+def _sanitize_nan(v):
+    """Convert NaN/Inf floats to None."""
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+        return None
+    return v
+
+
 class SourceMeasurement(BaseModel):
     station_name: str
     measured_at_utc: datetime
@@ -29,6 +37,15 @@ class SourceMeasurement(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     altitude_m: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _clean_nan(cls, data):
+        if isinstance(data, dict):
+            for key in ("temperature_c", "pressure_hpa", "speed_mps", "direction_deg", "latitude", "longitude", "altitude_m"):
+                if key in data:
+                    data[key] = _sanitize_nan(data[key])
+        return data
 
 
 class OutputMeasurement(BaseModel):
@@ -41,6 +58,16 @@ class OutputMeasurement(BaseModel):
     latitude: float | None = Field(default=None, alias="latitude")
     longitude: float | None = Field(default=None, alias="longitude")
     altitude_m: float | None = Field(default=None, alias="altitude")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _clean_nan(cls, data):
+        if isinstance(data, dict):
+            for key in ("temperature_c", "pressure_hpa", "speed_mps", "direction_deg", "latitude", "longitude", "altitude_m",
+                        "temperature", "pressure", "speed", "direction", "stationName", "datetime"):
+                if key in data and isinstance(data[key], float):
+                    data[key] = _sanitize_nan(data[key])
+        return data
 
 
 class MeasurementResponse(BaseModel):
