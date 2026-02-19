@@ -322,15 +322,11 @@ Use the login page with `API_AUTH_USERNAME` / `API_AUTH_PASSWORD`. The frontend 
 This repository ships with:
 
 - `main.py` and `src/main.py` FastAPI entrypoint shims for Vercel auto-detection.
-- `api/index.py` serverless entrypoint for Vercel Python runtime.
 - `vercel.json` with:
-  - `buildCommand: bash scripts/vercel_build.sh`
-  - `includeFiles: frontend/dist/**` for `api/index.py` bundle.
-  - route rewrite of all paths to `api/index.py`.
+  - `buildCommand: bash scripts/vercel_build.sh`.
 
 If your Vercel project uses `Root Directory = src`, this repo also includes:
 
-- `src/api/index.py`
 - `src/scripts/vercel_build.sh`
 - `src/vercel.json`
 
