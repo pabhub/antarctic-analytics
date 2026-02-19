@@ -1,50 +1,79 @@
 import os
 import shutil
-import libsql_experimental as sqlite3
 import json
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+import libsql_client
+
 from app.models import SourceMeasurement, StationCatalogItem
 
 logger = logging.getLogger(__name__)
+
+
+# Adapter to make libsql_client.Row behave like sqlite3.Row for dictionary access
+class RowAdapter:
+    def __init__(self, row):
+        self._row = row
+
+    def __getitem__(self, key):
+        if hasattr(self._row, key):
+            return getattr(self._row, key)
+        return self._row[key]
+
+    def keys(self):
+        return [k for k in dir(self._row) if not k.startswith('_')]
 
 
 class SQLiteRepository:
     def __init__(self, database_url: str) -> None:
         self.db_path = database_url
         logger.info("Initializing Turso/SQLite repository url=%s", self.db_path)
+        self.client = libsql_client.create_client_sync(url=self.db_path)
         self._initialize()
-
-    def _new_connection(self) -> sqlite3.Connection:
-        # libsql_experimental.connect accepts both local file paths and remote libsql:// / https:// urls
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        
-        # PRAGMA busy_timeout only applies to local file databases, remote Turso handles concurrency
-        if not self.db_path.startswith("libsql://") and not self.db_path.startswith("https://"):
-            conn.execute("PRAGMA busy_timeout = 5000")
-            
-        return conn
 
     @contextmanager
     def _read_connection(self):
-        conn = self._new_connection()
-        conn.execute("PRAGMA query_only = ON")
-        try:
-            yield conn
-        finally:
-            conn.close()
+        yield self
 
     @contextmanager
     def _write_connection(self):
-        conn = self._new_connection()
-        try:
-            yield conn
-        finally:
-            conn.close()
+        yield self
+
+    def execute(self, sql: str, args: tuple = ()) -> 'MockCursor':
+        # Translate named parameters if necessary, but we're mostly using ? so convert to args array
+        rs = self.client.execute(sql, args)
+        return MockCursor(rs)
+
+    def executemany(self, sql: str, seq_of_parameters: list[tuple]) -> None:
+        # libsql_client batch execution
+        stmts = [libsql_client.Statement(sql, args) for args in seq_of_parameters]
+        self.client.batch(stmts)
+
+    def commit(self):
+        pass
+
+    def close(self):
+        self.client.close()
+
+
+class MockCursor:
+    def __init__(self, result_set):
+        self.result_set = result_set
+        self.rows = [RowAdapter(row) for row in result_set.rows] if result_set and hasattr(result_set, 'rows') else []
+        self._idx = 0
+
+    def fetchone(self):
+        if self._idx < len(self.rows):
+            row = self.rows[self._idx]
+            self._idx += 1
+            return row
+        return None
+
+    def fetchall(self):
+        return self.rows
 
     def _initialize(self) -> None:
         with self._write_connection() as conn:
@@ -142,8 +171,12 @@ class SQLiteRepository:
             conn.commit()
 
     @staticmethod
-    def _ensure_columns(conn: sqlite3.Connection) -> None:
-        existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(measurements)").fetchall()}
+    def _ensure_columns(conn) -> None:
+        try:
+            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(measurements)").fetchall()}
+        except Exception:
+            existing_columns = set()
+            
         required_columns = {
             "direction_deg": "ALTER TABLE measurements ADD COLUMN direction_deg REAL",
             "latitude": "ALTER TABLE measurements ADD COLUMN latitude REAL",
@@ -152,11 +185,18 @@ class SQLiteRepository:
         }
         for column, ddl in required_columns.items():
             if column not in existing_columns:
-                conn.execute(ddl)
+                try:
+                    conn.execute(ddl)
+                except Exception:
+                    pass
 
     @staticmethod
-    def _ensure_station_catalog_columns(conn: sqlite3.Connection) -> None:
-        existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(station_catalog)").fetchall()}
+    def _ensure_station_catalog_columns(conn) -> None:
+        try:
+            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(station_catalog)").fetchall()}
+        except Exception:
+            existing_columns = set()
+            
         required_columns = {
             "data_endpoint": (
                 "ALTER TABLE station_catalog ADD COLUMN data_endpoint TEXT NOT NULL "
@@ -168,17 +208,27 @@ class SQLiteRepository:
         }
         for column, ddl in required_columns.items():
             if column not in existing_columns:
-                conn.execute(ddl)
+                try:
+                    conn.execute(ddl)
+                except Exception:
+                    pass
 
     @staticmethod
-    def _ensure_fetch_windows_columns(conn: sqlite3.Connection) -> None:
-        existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(fetch_windows)").fetchall()}
+    def _ensure_fetch_windows_columns(conn) -> None:
+        try:
+            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(fetch_windows)").fetchall()}
+        except Exception:
+            existing_columns = set()
+            
         required_columns = {
             "direction_checked": "ALTER TABLE fetch_windows ADD COLUMN direction_checked INTEGER NOT NULL DEFAULT 0",
         }
         for column, ddl in required_columns.items():
             if column not in existing_columns:
-                conn.execute(ddl)
+                try:
+                    conn.execute(ddl)
+                except Exception:
+                    pass
 
     def upsert_measurements(
         self,
