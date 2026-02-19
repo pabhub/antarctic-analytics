@@ -279,11 +279,18 @@ class SQLiteRepository:
             try:
                 self._turso.execute("SELECT 1 FROM measurements LIMIT 1")
                 _log_seed("Tables already exist in Turso, skipping DDL.")
-                return
             except Exception:
                 _log_seed("Tables not found, running DDL...")
-            # Batch all DDL into a single HTTP request
-            self._turso.batch_execute(self._DDL_STATEMENTS)
+                self._turso.batch_execute(self._DDL_STATEMENTS)
+
+            # Migrate: strip +00:00 timezone suffixes from stored timestamps
+            # so that string comparisons in WHERE clauses work correctly.
+            # This is idempotent (REPLACE on clean data is a no-op).
+            self._turso.batch_execute([
+                "UPDATE fetch_windows SET start_utc = REPLACE(start_utc, '+00:00', ''), end_utc = REPLACE(end_utc, '+00:00', '') WHERE start_utc LIKE '%+00:00' OR end_utc LIKE '%+00:00'",
+                "UPDATE measurements SET measured_at_utc = REPLACE(measured_at_utc, '+00:00', '') WHERE measured_at_utc LIKE '%+00:00'",
+            ])
+            _log_seed("Timestamp migration complete.")
         else:
             with self._write_connection() as conn:
                 conn.execute("PRAGMA journal_mode = WAL")
