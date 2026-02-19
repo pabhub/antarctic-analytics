@@ -35,11 +35,15 @@ class RowAdapter:
 
 
 class SQLiteRepository:
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, auth_token: str = "") -> None:
         self.db_path = database_url
+        self.auth_token = auth_token
         _log_seed(f"Initializing Turso/SQLite repository url={self.db_path[:30]}...")
         try:
-            self.client = libsql_client.create_client_sync(url=self.db_path)
+            kwargs = {"url": self.db_path}
+            if self.auth_token:
+                kwargs["auth_token"] = self.auth_token
+            self.client = libsql_client.create_client_sync(**kwargs)
             self._initialize()
             _log_seed("Turso/SQLite initialized successfully.")
         except Exception as exc:

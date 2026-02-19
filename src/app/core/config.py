@@ -24,6 +24,7 @@ class Settings:
     aemet_min_request_interval_seconds: float = 2.0
     aemet_retry_after_cap_seconds: float = 2.0
     query_jobs_background_enabled: bool = True
+    turso_auth_token: str = ""
 
 
 def _strip_wrapping_quotes(value: str) -> str:
@@ -67,11 +68,7 @@ def _env_bool(name: str, default: bool) -> bool:
 def _default_database_url() -> str:
     # Priority 1: Turso env vars (set via Vercel dashboard integration)
     turso_url = os.getenv("TURSO_DATABASE_URL")
-    turso_token = os.getenv("TURSO_AUTH_TOKEN")
     if turso_url:
-        if turso_token:
-            sep = "&" if "?" in turso_url else "?"
-            return f"{turso_url}{sep}authToken={turso_token}"
         return turso_url
     # Priority 2: Generic DATABASE_URL
     db_url = os.getenv("DATABASE_URL")
@@ -117,6 +114,7 @@ def get_settings() -> Settings:
     return Settings(
         aemet_api_key=os.getenv("AEMET_API_KEY", ""),
         database_url=_normalize_database_url(raw_db_url),
+        turso_auth_token=os.getenv("TURSO_AUTH_TOKEN", ""),
         request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
         aemet_min_request_interval_seconds=min_request_interval_seconds,
         aemet_retry_after_cap_seconds=retry_after_cap_seconds,

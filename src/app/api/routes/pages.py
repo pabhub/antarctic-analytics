@@ -48,7 +48,12 @@ def get_debug_logs():
         info["settings_error"] = f"{type(e).__name__}: {e}"
     try:
         import libsql_client
-        client = libsql_client.create_client_sync(url=settings.database_url)
+        kwargs = {"url": settings.database_url}
+        auth_token = os.getenv("TURSO_AUTH_TOKEN", "")
+        if auth_token:
+            kwargs["auth_token"] = auth_token
+            info["auth_token_present"] = True
+        client = libsql_client.create_client_sync(**kwargs)
         rs = client.execute("SELECT COUNT(*) as cnt FROM measurements")
         info["measurement_count"] = rs.rows[0][0] if rs.rows else "no rows"
         info["turso_ok"] = True

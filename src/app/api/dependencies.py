@@ -31,8 +31,8 @@ http_bearer = HTTPBearer(auto_error=False)
 
 
 @lru_cache(maxsize=1)
-def _cached_repository(database_url: str) -> SQLiteRepository:
-    return SQLiteRepository(database_url)
+def _cached_repository(database_url: str, auth_token: str = "") -> SQLiteRepository:
+    return SQLiteRepository(database_url, auth_token=auth_token)
 
 
 @lru_cache(maxsize=1)
@@ -57,7 +57,7 @@ def _cached_auth_service(settings: Settings) -> AuthService:
 
 @lru_cache(maxsize=1)
 def _cached_service(settings: Settings) -> AntarcticService:
-    repository = _cached_repository(settings.database_url)
+    repository = _cached_repository(settings.database_url, settings.turso_auth_token)
     client = _cached_aemet_client(
         settings.aemet_api_key,
         settings.request_timeout_seconds,
