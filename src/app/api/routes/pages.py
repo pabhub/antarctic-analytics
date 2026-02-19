@@ -124,6 +124,17 @@ def get_debug_logs():
             info["cache_check_result"] = dict(match) if match else "NO MATCH"
         except Exception as e:
             info["cache_check_error"] = str(e)
+        # Run migration: delete old-format fetch_windows with +00:00 suffixes
+        try:
+            client.execute("DELETE FROM fetch_windows WHERE start_utc LIKE '%+00:00' OR end_utc LIKE '%+00:00'")
+            client.execute("UPDATE measurements SET measured_at_utc = REPLACE(measured_at_utc, '+00:00', '') WHERE measured_at_utc LIKE '%+00:00'")
+            # Re-count after migration
+            cursor = client.execute("SELECT COUNT(*) as cnt FROM fetch_windows")
+            row = cursor.fetchone()
+            info["fetch_windows_after_migration"] = row["cnt"] if row else 0
+            info["migration_status"] = "OK"
+        except Exception as e:
+            info["migration_error"] = f"{type(e).__name__}: {e}"
         info["turso_ok"] = True
         client.close()
     except Exception as e:
