@@ -47,6 +47,11 @@ class AemetClient:
         self.min_request_interval_seconds = max(0.0, min_request_interval_seconds)
         cap = retry_after_cap_seconds if retry_after_cap_seconds is not None else self.min_request_interval_seconds
         self.retry_after_cap_seconds = max(self.min_request_interval_seconds, cap)
+        self._http_client = httpx.Client(timeout=self.timeout_seconds)
+
+    def close(self) -> None:
+        """Close the underlying HTTP connection pool."""
+        self._http_client.close()
 
     def fetch_station_data(
         self,
@@ -186,82 +191,88 @@ class AemetClient:
         allow_no_data: bool,
         no_data_log_context: str | None = None,
     ) -> list[dict[str, Any]]:
-        with httpx.Client(timeout=self.timeout_seconds) as client:
-            meta_response = self._throttled_get(client, endpoint, params={"api_key": self.api_key})
-            try:
-                meta_response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                status = exc.response.status_code
-                detail = f"AEMET metadata request failed with HTTP {status}"
-                if status == 429:
-                    retry_after = self._retry_after_seconds(exc.response)
-                    detail = f"{detail}. Retry-After={int(retry_after)}s"
-                raise UpstreamServiceError(detail) from exc
+        client = self._http_client
+        meta_response = self._throttled_get(client, endpoint, params={"api_key": self.api_key})
+        try:
+            meta_response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            detail = f"AEMET metadata request failed with HTTP {status}"
+            if status == 429:
+                retry_after = self._retry_after_seconds(exc.response)
+                detail = f"{detail}. Retry-After={int(retry_after)}s"
+            raise UpstreamServiceError(detail) from exc
 
-            try:
-                payload = meta_response.json()
-            except ValueError as exc:
-                raise UpstreamServiceError("AEMET metadata response is not valid JSON") from exc
+        try:
+            payload = meta_response.json()
+        except ValueError as exc:
+            raise UpstreamServiceError("AEMET metadata response is not valid JSON") from exc
 
-            if not isinstance(payload, dict):
-                raise UpstreamServiceError("AEMET metadata response has unexpected shape")
+        if not isinstance(payload, dict):
+            raise UpstreamServiceError("AEMET metadata response has unexpected shape")
 
-            data_url = payload.get("datos")
-            if not data_url:
-                estado = payload.get("estado")
-                descripcion = payload.get("descripcion")
-                if allow_no_data and str(estado) == "404" and isinstance(descripcion, str) and "no hay datos" in descripcion.lower():
-                    context = f" ({no_data_log_context})" if no_data_log_context else ""
-                    logger.info("AEMET returned no data for requested criteria%s", context)
-                    return []
-                detail_parts = ["AEMET response missing 'datos' URL"]
-                if estado is not None:
-                    detail_parts.append(f"estado={estado}")
-                if descripcion:
-                    detail_parts.append(f"descripcion={descripcion}")
-                raise UpstreamServiceError(". ".join(detail_parts))
+        data_url = payload.get("datos")
+        if not data_url:
+            estado = payload.get("estado")
+            descripcion = payload.get("descripcion")
+            if allow_no_data and str(estado) == "404" and isinstance(descripcion, str) and "no hay datos" in descripcion.lower():
+                context = f" ({no_data_log_context})" if no_data_log_context else ""
+                logger.info("AEMET returned no data for requested criteria%s", context)
+                return []
+            detail_parts = ["AEMET response missing 'datos' URL"]
+            if estado is not None:
+                detail_parts.append(f"estado={estado}")
+            if descripcion:
+                detail_parts.append(f"descripcion={descripcion}")
+            raise UpstreamServiceError(".".join(detail_parts))
 
-            logger.info("Downloading AEMET data from temporary URL")
-            data_response = self._throttled_get(client, data_url, enforce_min_interval=False)
-            try:
-                data_response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                status = exc.response.status_code
-                detail = f"AEMET data download failed with HTTP {status}"
-                if status == 429:
-                    retry_after = self._retry_after_seconds(exc.response)
-                    detail = f"{detail}. Retry-After={int(retry_after)}s"
-                raise UpstreamServiceError(detail) from exc
+        # Presigned data URLs are not rate-limited by AEMET — skip throttle entirely.
+        logger.info("Downloading AEMET data from temporary URL")
+        try:
+            data_response = client.get(data_url)
+        except httpx.RequestError as exc:
+            raise UpstreamServiceError(
+                f"AEMET data download failed for URL {data_url}: {exc.__class__.__name__}"
+            ) from exc
+        try:
+            data_response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            detail = f"AEMET data download failed with HTTP {status}"
+            if status == 429:
+                retry_after = self._retry_after_seconds(exc.response)
+                detail = f"{detail}. Retry-After={int(retry_after)}s"
+            raise UpstreamServiceError(detail) from exc
 
-            try:
-                raw_items = data_response.json()
-            except ValueError as exc:
-                json_rows = self._parse_json_rows(data_response.text)
-                if json_rows is not None:
-                    return json_rows
-                csv_rows = self._parse_csv_rows(data_response.text)
-                if csv_rows is not None:
-                    return csv_rows
-                raise UpstreamServiceError("AEMET data payload is not valid JSON") from exc
+        try:
+            raw_items = data_response.json()
+        except ValueError as exc:
+            json_rows = self._parse_json_rows(data_response.text)
+            if json_rows is not None:
+                return json_rows
+            csv_rows = self._parse_csv_rows(data_response.text)
+            if csv_rows is not None:
+                return csv_rows
+            raise UpstreamServiceError("AEMET data payload is not valid JSON") from exc
 
-            if isinstance(raw_items, str):
-                json_rows = self._parse_json_rows(raw_items)
-                if json_rows is not None:
-                    return json_rows
-                csv_rows = self._parse_csv_rows(raw_items)
-                if csv_rows is not None:
-                    return csv_rows
+        if isinstance(raw_items, str):
+            json_rows = self._parse_json_rows(raw_items)
+            if json_rows is not None:
+                return json_rows
+            csv_rows = self._parse_csv_rows(raw_items)
+            if csv_rows is not None:
+                return csv_rows
 
-            if isinstance(raw_items, dict):
-                nested_lists = [value for value in raw_items.values() if isinstance(value, list)]
-                if len(nested_lists) == 1:
-                    nested = nested_lists[0]
-                    if all(isinstance(item, dict) for item in nested):
-                        return nested
+        if isinstance(raw_items, dict):
+            nested_lists = [value for value in raw_items.values() if isinstance(value, list)]
+            if len(nested_lists) == 1:
+                nested = nested_lists[0]
+                if all(isinstance(item, dict) for item in nested):
+                    return nested
 
-            if not isinstance(raw_items, list):
-                snippet = str(raw_items)[:240]
-                raise UpstreamServiceError(f"AEMET data payload has unexpected shape (sample={snippet})")
+        if not isinstance(raw_items, list):
+            snippet = str(raw_items)[:240]
+            raise UpstreamServiceError(f"AEMET data payload has unexpected shape (sample={snippet})")
 
         return raw_items
 
@@ -269,30 +280,33 @@ class AemetClient:
         self,
         client: httpx.Client,
         url: str,
-        *,
-        enforce_min_interval: bool = True,
         **kwargs: Any,
     ) -> httpx.Response:
+        # Compute required wait under lock, then release lock before sleeping.
         with self.__class__._request_lock:
             now = time.monotonic()
             elapsed_since_last = now - self.__class__._last_request_monotonic
-            wait_for_min_interval = (
-                self.min_request_interval_seconds - elapsed_since_last if enforce_min_interval else 0.0
-            )
+            wait_for_min_interval = self.min_request_interval_seconds - elapsed_since_last
             wait_for_rate_limit = self.__class__._rate_limited_until_monotonic - now
-            wait_for = max(wait_for_min_interval, wait_for_rate_limit)
-            if wait_for > 0:
-                logger.debug("Throttling AEMET request for %.2fs before GET %s", wait_for, url)
-                time.sleep(wait_for)
-            try:
-                response = client.get(url, **kwargs)
-            except httpx.RequestError as exc:
-                completed_at = time.monotonic()
-                self.__class__._last_request_monotonic = completed_at
-                raise UpstreamServiceError(
-                    f"AEMET request failed for URL {url}: {exc.__class__.__name__}"
-                ) from exc
-            completed_at = time.monotonic()
+            wait_for = max(wait_for_min_interval, wait_for_rate_limit, 0.0)
+            # Reserve our slot by advancing the timestamp optimistically.
+            self.__class__._last_request_monotonic = now + wait_for
+
+        if wait_for > 0:
+            logger.debug("Throttling AEMET request for %.2fs before GET %s", wait_for, url)
+            time.sleep(wait_for)
+
+        try:
+            response = client.get(url, **kwargs)
+        except httpx.RequestError as exc:
+            with self.__class__._request_lock:
+                self.__class__._last_request_monotonic = time.monotonic()
+            raise UpstreamServiceError(
+                f"AEMET request failed for URL {url}: {exc.__class__.__name__}"
+            ) from exc
+
+        completed_at = time.monotonic()
+        with self.__class__._request_lock:
             self.__class__._last_request_monotonic = completed_at
             if response.status_code == 429:
                 retry_after = self._retry_after_seconds(response)
@@ -304,7 +318,7 @@ class AemetClient:
                     retry_after,
                     url,
                 )
-            return response
+        return response
 
     def _retry_after_seconds(self, response: httpx.Response) -> float:
         raw = response.headers.get("Retry-After")

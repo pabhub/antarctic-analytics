@@ -22,20 +22,29 @@ class FakeResponse:
 
 
 class FakeHttpClient:
+    """Fake httpx.Client that returns canned responses in sequence."""
+
     def __init__(self, responses):
         self._responses = responses
         self._idx = 0
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
 
     def get(self, *_args, **_kwargs):
         response = self._responses[self._idx]
         self._idx += 1
         return response
+
+    def close(self):
+        pass
+
+
+def _make_client(responses, **kwargs):
+    """Create an AemetClient with a fake HTTP client injected."""
+    client = AemetClient(**kwargs)
+    client._http_client = FakeHttpClient(responses)
+    # Reset class-level throttle state so tests don't interfere with each other.
+    AemetClient._last_request_monotonic = 0.0
+    AemetClient._rate_limited_until_monotonic = 0.0
+    return client
 
 
 def test_retry_after_is_capped_to_configured_limiter_interval():
@@ -48,11 +57,9 @@ def test_retry_after_is_capped_to_configured_limiter_interval():
     assert client._retry_after_seconds(response) == 2.0
 
 
-def test_fetch_station_data_raises_clear_error_when_metadata_has_no_datos(monkeypatch):
+def test_fetch_station_data_raises_clear_error_when_metadata_has_no_datos():
     responses = [FakeResponse({"estado": 401, "descripcion": "API key no válida"})]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="bad-key")
+    client = _make_client(responses, api_key="bad-key")
     with pytest.raises(RuntimeError, match="missing 'datos' URL"):
         client.fetch_station_data(
             start_utc=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
@@ -61,11 +68,9 @@ def test_fetch_station_data_raises_clear_error_when_metadata_has_no_datos(monkey
         )
 
 
-def test_fetch_station_data_returns_empty_for_aemet_no_data_404(monkeypatch):
+def test_fetch_station_data_returns_empty_for_aemet_no_data_404():
     responses = [FakeResponse({"estado": 404, "descripcion": "No hay datos que satisfagan esos criterios"})]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     out = client.fetch_station_data(
         start_utc=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
         end_utc=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
@@ -74,7 +79,7 @@ def test_fetch_station_data_returns_empty_for_aemet_no_data_404(monkeypatch):
     assert out == []
 
 
-def test_fetch_station_inventory_parses_station_rows(monkeypatch):
+def test_fetch_station_inventory_parses_station_rows():
     responses = [
         FakeResponse({"estado": 200, "datos": "https://example.test/data.json"}),
         FakeResponse(
@@ -90,9 +95,7 @@ def test_fetch_station_inventory_parses_station_rows(monkeypatch):
             ]
         ),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     out = client.fetch_station_inventory()
 
     assert len(out) == 1
@@ -101,7 +104,7 @@ def test_fetch_station_inventory_parses_station_rows(monkeypatch):
     assert out[0].province == "ANTARCTIC"
 
 
-def test_fetch_station_inventory_parses_csv_payload(monkeypatch):
+def test_fetch_station_inventory_parses_csv_payload():
     csv_payload = (
         "indicativo;nombre;provincia;latitud;longitud;altitud\n"
         "89070;JUAN CARLOS I;ANTARTIDA;625640S;603524W;12\n"
@@ -110,9 +113,7 @@ def test_fetch_station_inventory_parses_csv_payload(monkeypatch):
         FakeResponse({"estado": 200, "datos": "https://example.test/data.csv"}),
         FakeResponse(csv_payload),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     out = client.fetch_station_inventory()
 
     assert len(out) == 1
@@ -122,7 +123,7 @@ def test_fetch_station_inventory_parses_csv_payload(monkeypatch):
     assert out[0].longitude is not None
 
 
-def test_fetch_station_inventory_handles_uppercase_json_keys(monkeypatch):
+def test_fetch_station_inventory_handles_uppercase_json_keys():
     responses = [
         FakeResponse({"estado": 200, "datos": "https://example.test/data.json"}),
         FakeResponse(
@@ -138,9 +139,7 @@ def test_fetch_station_inventory_handles_uppercase_json_keys(monkeypatch):
             ]
         ),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     out = client.fetch_station_inventory()
 
     assert len(out) == 1
@@ -148,7 +147,7 @@ def test_fetch_station_inventory_handles_uppercase_json_keys(monkeypatch):
     assert out[0].station_name == "GABRIEL DE CASTILLA"
 
 
-def test_fetch_station_inventory_supports_nested_properties_shape(monkeypatch):
+def test_fetch_station_inventory_supports_nested_properties_shape():
     responses = [
         FakeResponse({"estado": 200, "datos": "https://example.test/geo.json"}),
         FakeResponse(
@@ -167,9 +166,7 @@ def test_fetch_station_inventory_supports_nested_properties_shape(monkeypatch):
             ]
         ),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     out = client.fetch_station_inventory()
 
     assert len(out) == 1
@@ -177,7 +174,7 @@ def test_fetch_station_inventory_supports_nested_properties_shape(monkeypatch):
     assert out[0].station_name == "ESTACION TEST"
 
 
-def test_fetch_station_inventory_parses_json_lines_payload(monkeypatch):
+def test_fetch_station_inventory_parses_json_lines_payload():
     json_lines_payload = (
         '{"indicativo":"0016A","nombre":"ESCORCA, LLUC","provincia":"ILLES BALEARS","latitud":"394924N","longitud":"025309E","altitud":"525"}\n'
         '{"indicativo":"0017A","nombre":"ANOTHER STATION","provincia":"ILLES BALEARS","latitud":"394500N","longitud":"025000E","altitud":"100"}\n'
@@ -186,9 +183,7 @@ def test_fetch_station_inventory_parses_json_lines_payload(monkeypatch):
         FakeResponse({"estado": 200, "datos": "https://example.test/data.txt"}),
         FakeResponse(json_lines_payload),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     out = client.fetch_station_inventory()
 
     assert len(out) == 2
@@ -196,7 +191,7 @@ def test_fetch_station_inventory_parses_json_lines_payload(monkeypatch):
     assert out[0].station_name == "ESCORCA, LLUC"
 
 
-def test_fetch_station_data_parses_alternative_measurement_keys_and_cardinal_direction(monkeypatch):
+def test_fetch_station_data_parses_alternative_measurement_keys_and_cardinal_direction():
     responses = [
         FakeResponse({"estado": 200, "datos": "https://example.test/data.json"}),
         FakeResponse(
@@ -215,9 +210,7 @@ def test_fetch_station_data_parses_alternative_measurement_keys_and_cardinal_dir
             ]
         ),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     rows = client.fetch_station_data(
         start_utc=datetime(2025, 2, 18, 9, 0, tzinfo=UTC),
         end_utc=datetime(2025, 2, 18, 11, 0, tzinfo=UTC),
@@ -233,7 +226,7 @@ def test_fetch_station_data_parses_alternative_measurement_keys_and_cardinal_dir
     assert rows[0].longitude is not None
 
 
-def test_fetch_station_data_parses_direction_numeric_with_symbol(monkeypatch):
+def test_fetch_station_data_parses_direction_numeric_with_symbol():
     responses = [
         FakeResponse({"estado": 200, "datos": "https://example.test/data.json"}),
         FakeResponse(
@@ -249,9 +242,7 @@ def test_fetch_station_data_parses_direction_numeric_with_symbol(monkeypatch):
             ]
         ),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     rows = client.fetch_station_data(
         start_utc=datetime(2025, 2, 18, 9, 0, tzinfo=UTC),
         end_utc=datetime(2025, 2, 18, 11, 0, tzinfo=UTC),
@@ -262,7 +253,7 @@ def test_fetch_station_data_parses_direction_numeric_with_symbol(monkeypatch):
     assert rows[0].direction_deg == 270.0
 
 
-def test_fetch_station_data_parses_ddd_direction_key(monkeypatch):
+def test_fetch_station_data_parses_ddd_direction_key():
     responses = [
         FakeResponse({"estado": 200, "datos": "https://example.test/data.json"}),
         FakeResponse(
@@ -278,9 +269,7 @@ def test_fetch_station_data_parses_ddd_direction_key(monkeypatch):
             ]
         ),
     ]
-    monkeypatch.setattr("app.services.aemet_client.httpx.Client", lambda timeout: FakeHttpClient(responses))
-
-    client = AemetClient(api_key="ok-key")
+    client = _make_client(responses, api_key="ok-key")
     rows = client.fetch_station_data(
         start_utc=datetime(2024, 2, 15, 0, 0, tzinfo=UTC),
         end_utc=datetime(2024, 2, 15, 1, 0, tzinfo=UTC),

@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from time import perf_counter
 from uuid import uuid4
 
@@ -7,7 +8,7 @@ from fastapi import Request
 from fastapi.staticfiles import StaticFiles
 
 from app.api import get_service, router
-from app.api.dependencies import frontend_dist
+from app.api.dependencies import clear_dependency_caches, frontend_dist
 from app.core.logging import configure_logging
 
 configure_logging()
@@ -20,6 +21,20 @@ OPENAPI_TAGS = [
     {"name": "Data Export", "description": "CSV and Parquet exports for cached Antarctic station windows."},
 ]
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    yield
+    # Shutdown: close the persistent httpx.Client connection pool.
+    try:
+        service = get_service()
+        if hasattr(service, "aemet_client") and hasattr(service.aemet_client, "close"):
+            service.aemet_client.close()
+    except Exception:  # noqa: BLE001
+        pass
+    clear_dependency_caches()
+
+
 app = FastAPI(
     title="GS Inima Antarctic Wind Feasibility API",
     version="1.1.0",
@@ -28,6 +43,7 @@ app = FastAPI(
         "playback analytics, and export endpoints."
     ),
     openapi_tags=OPENAPI_TAGS,
+    lifespan=lifespan,
 )
 app.include_router(router)
 
@@ -65,9 +81,16 @@ async def request_logging_middleware(request: Request, call_next):
         response.status_code,
         elapsed_ms,
     )
+    # Let Vercel's Edge CDN cache API responses (s-maxage controls CDN caching,
+    # max-age=0 forces browsers to always revalidate with the CDN).
+    if request.url.path.startswith("/api/") and 200 <= response.status_code < 300:
+        if "Cache-Control" not in response.headers:
+            response.headers["Cache-Control"] = "public, max-age=0, s-maxage=10800, stale-while-revalidate=1800"
     return response
+
 
 if frontend_dist.exists():
     app.mount("/static", StaticFiles(directory=frontend_dist), name="static")
 
 __all__ = ["app", "get_service"]
+
