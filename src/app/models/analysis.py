@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
 from app.models.measurement import OutputMeasurement, TimeAggregation
 from app.models.station import StationProfile, StationRole
+
+
+def _clean_float_nan(cls, data):
+    """Convert any NaN/Inf float values to None in the input dict."""
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+                data[key] = None
+    return data
 
 
 class LatestStationSnapshot(BaseModel):
@@ -20,6 +30,8 @@ class LatestStationSnapshot(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     altitude_m: float | None = Field(default=None, alias="altitude")
+
+    _nan = model_validator(mode="before")(_clean_float_nan)
 
 
 class StationFeasibilitySummary(BaseModel):
@@ -40,6 +52,8 @@ class StationFeasibilitySummary(BaseModel):
     prevailing_direction_deg: float | None = Field(alias="prevailingDirection")
     estimated_wind_power_density_wm2: float | None = Field(alias="estimatedWindPowerDensity")
     latest_observation_utc: datetime | None = Field(alias="latestObservationUtc")
+
+    _nan = model_validator(mode="before")(_clean_float_nan)
 
 
 class StationFeasibilitySeries(BaseModel):
@@ -238,6 +252,8 @@ class WindRoseSummary(BaseModel):
     directional_concentration: float | None = Field(alias="directionalConcentration")
     calm_share: float | None = Field(alias="calmShare")
 
+    _nan = model_validator(mode="before")(_clean_float_nan)
+
 
 class PlaybackFrame(BaseModel):
     datetime_local: datetime = Field(alias="datetime")
@@ -248,6 +264,8 @@ class PlaybackFrame(BaseModel):
     quality_flag: FrameQuality = Field(alias="qualityFlag")
     dx: float | None = None
     dy: float | None = None
+
+    _nan = model_validator(mode="before")(_clean_float_nan)
 
 
 class PlaybackResponse(BaseModel):
@@ -285,6 +303,8 @@ class TimeframeBucket(BaseModel):
     avg_pressure_hpa: float | None = Field(default=None, alias="avgPressure")
     estimated_generation_mwh: float | None = Field(alias="estimatedGenerationMwh")
 
+    _nan = model_validator(mode="before")(_clean_float_nan)
+
 
 class ComparisonDelta(BaseModel):
     metric: str
@@ -292,6 +312,8 @@ class ComparisonDelta(BaseModel):
     current: float | None
     absolute_delta: float | None = Field(alias="absoluteDelta")
     percent_delta: float | None = Field(alias="percentDelta")
+
+    _nan = model_validator(mode="before")(_clean_float_nan)
 
 
 class TimeframeAnalyticsResponse(BaseModel):
