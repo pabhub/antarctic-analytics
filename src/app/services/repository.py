@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 # Candidate locations where a compressed pre-built cache DB may be bundled into the deploy.
 _BUNDLED_DB_CANDIDATES = [
-    Path(__file__).resolve().parents[3] / "aemet_cache.db.gz",  # project root
-    Path(__file__).resolve().parents[2] / "aemet_cache.db.gz",  # src/
+    Path(__file__).resolve().parent / "aemet_cache.db.gz",  # Same directory as this module
+    Path.cwd() / "aemet_cache.db.gz",                        # Vercel root execution directory
+    Path(__file__).resolve().parents[3] / "aemet_cache.db.gz", # Old root path as fallback
 ]
 
 
