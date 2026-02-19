@@ -267,7 +267,14 @@ class AemetClient:
             if wait_for > 0:
                 logger.debug("Throttling AEMET request for %.2fs before GET %s", wait_for, url)
                 time.sleep(wait_for)
-            response = client.get(url, **kwargs)
+            try:
+                response = client.get(url, **kwargs)
+            except httpx.RequestError as exc:
+                completed_at = time.monotonic()
+                self.__class__._last_request_monotonic = completed_at
+                raise UpstreamServiceError(
+                    f"AEMET request failed for URL {url}: {exc.__class__.__name__}"
+                ) from exc
             completed_at = time.monotonic()
             self.__class__._last_request_monotonic = completed_at
             if response.status_code == 429:
