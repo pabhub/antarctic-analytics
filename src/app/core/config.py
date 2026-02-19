@@ -67,8 +67,8 @@ def _env_bool(name: str, default: bool) -> bool:
 def _default_database_url() -> str:
     # Vercel serverless filesystem is read-only except /tmp.
     if os.getenv("VERCEL") or os.getenv("VERCEL_ENV"):
-        return "sqlite:///tmp/aemet_cache.db"
-    return "sqlite:///./aemet_cache.db"
+        return "/tmp/aemet_cache.db"
+    return "aemet_cache.db"
 
 
 def get_settings() -> Settings:

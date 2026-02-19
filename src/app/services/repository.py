@@ -1,101 +1,32 @@
 import os
 import shutil
-import sqlite3
+import libsql_experimental as sqlite3
 import json
 import logging
-import httpx
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
 from app.models import SourceMeasurement, StationCatalogItem
 
 logger = logging.getLogger(__name__)
 
-# Store cold-start seed logs in memory so we can read them via a debug API endpoint
-seed_debug_logs: list[str] = []
-
-def _log_seed(msg: str) -> None:
-    logger.info(msg)
-    seed_debug_logs.append(msg)
-
-def _seed_from_blob_storage(target_path: str) -> None:
-    """Download the pre-built cache DB from Vercel Blob Storage to the writable target path on Vercel."""
-    if not (os.getenv("VERCEL") or os.getenv("VERCEL_ENV")):
-        return
-    if os.path.exists(target_path):
-        _log_seed(f"SEED: target_path {target_path} already exists, skipping download.")
-        return
-        
-    blob_url = os.environ.get("CACHE_DB_BLOB_URL")
-    if not blob_url:
-        _log_seed("SEED: Vercel cold start but CACHE_DB_BLOB_URL is missing. Starting with an empty cache.")
-        return
-        
-    _log_seed(f"SEED: Starting cache DB download. target={target_path}, url={blob_url}")
-    
-    try:
-        # Stream the DB to disk to avoid loading 150MB into memory
-        with httpx.stream("GET", blob_url, follow_redirects=True, timeout=60.0) as response:
-            response.raise_for_status()
-            with open(target_path, "wb") as f_out:
-                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                    f_out.write(chunk)
-        
-        size = os.path.getsize(target_path)
-        _log_seed(f"SEED: Success! File size is {size} bytes")
-    except Exception as exc:
-        _log_seed(f"SEED: Failed to download DB from Blob Storage: {str(exc)}")
-        if os.path.exists(target_path):
-            os.remove(target_path)
-
 
 class SQLiteRepository:
     def __init__(self, database_url: str) -> None:
-        parsed = urlparse(database_url)
-        if parsed.scheme != "sqlite":
-            raise ValueError("Only sqlite database URLs are supported.")
-
-        if parsed.path in {":memory:", "/:memory:"}:
-            self.db_path = ":memory:"
-        else:
-            raw_path = parsed.path or ""
-            # sqlite:///./file.db -> /./file.db (relative path encoded with leading slash)
-            if raw_path.startswith("/./") or raw_path.startswith("/../"):
-                normalized_path = raw_path[1:]
-            # sqlite:////tmp/file.db may parse as //tmp/file.db; normalize to /tmp/file.db
-            elif raw_path.startswith("//"):
-                normalized_path = raw_path[1:]
-            # sqlite:///tmp/file.db should remain absolute /tmp/file.db
-            elif raw_path.startswith("/"):
-                normalized_path = raw_path
-            else:
-                normalized_path = raw_path
-
-            self.db_path = normalized_path or "aemet_cache.db"
-
-        logger.info("Initializing SQLite repository path=%s", self.db_path)
-        _seed_from_blob_storage(self.db_path)
-        try:
-            self._initialize()
-        except sqlite3.OperationalError as exc:
-            fallback_path = "/tmp/aemet_cache.db"
-            if self.db_path == fallback_path:
-                raise
-            logger.warning(
-                "SQLite initialization failed for path=%s (%s). Retrying with fallback path=%s",
-                self.db_path,
-                str(exc),
-                fallback_path,
-            )
-            self.db_path = fallback_path
-            self._initialize()
+        self.db_path = database_url
+        logger.info("Initializing Turso/SQLite repository url=%s", self.db_path)
+        self._initialize()
 
     def _new_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        # libsql_experimental.connect accepts both local file paths and remote libsql:// / https:// urls
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout = 5000")
+        
+        # PRAGMA busy_timeout only applies to local file databases, remote Turso handles concurrency
+        if not self.db_path.startswith("libsql://") and not self.db_path.startswith("https://"):
+            conn.execute("PRAGMA busy_timeout = 5000")
+            
         return conn
 
     @contextmanager
