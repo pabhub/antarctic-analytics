@@ -81,6 +81,15 @@ class TursoHttpClient:
         resp = self._http.post("/v2/pipeline", json={"requests": requests})
         resp.raise_for_status()
 
+    def batch_execute(self, statements: list[str]) -> None:
+        """Execute multiple SQL statements in a single pipeline request."""
+        if not statements:
+            return
+        requests = [{"type": "execute", "stmt": {"sql": sql}} for sql in statements]
+        requests.append({"type": "close"})
+        resp = self._http.post("/v2/pipeline", json={"requests": requests})
+        resp.raise_for_status()
+
     @staticmethod
     def _encode_arg(value):
         if value is None:
@@ -88,6 +97,8 @@ class TursoHttpClient:
         elif isinstance(value, int):
             return {"type": "integer", "value": str(value)}
         elif isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                return {"type": "null"}
             return {"type": "float", "value": value}
         elif isinstance(value, str):
             return {"type": "text", "value": value}
@@ -186,103 +197,82 @@ class SQLiteRepository:
             finally:
                 conn.close()
 
+    _DDL_STATEMENTS = [
+        """CREATE TABLE IF NOT EXISTS measurements (
+            station_id TEXT NOT NULL,
+            station_name TEXT NOT NULL,
+            measured_at_utc TEXT NOT NULL,
+            temperature_c REAL,
+            pressure_hpa REAL,
+            speed_mps REAL,
+            direction_deg REAL,
+            latitude REAL,
+            longitude REAL,
+            altitude_m REAL,
+            fetched_at_utc TEXT NOT NULL,
+            PRIMARY KEY (station_id, measured_at_utc)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_measurements_station_datetime ON measurements(station_id, measured_at_utc)",
+        """CREATE TABLE IF NOT EXISTS fetch_windows (
+            station_id TEXT NOT NULL,
+            start_utc TEXT NOT NULL,
+            end_utc TEXT NOT NULL,
+            fetched_at_utc TEXT NOT NULL,
+            direction_checked INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (station_id, start_utc, end_utc)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_fetch_windows_station_fetched_at ON fetch_windows(station_id, fetched_at_utc)",
+        """CREATE TABLE IF NOT EXISTS station_catalog (
+            station_id TEXT NOT NULL PRIMARY KEY,
+            station_name TEXT NOT NULL,
+            province TEXT,
+            latitude REAL,
+            longitude REAL,
+            altitude_m REAL,
+            data_endpoint TEXT NOT NULL DEFAULT 'valores-climatologicos-inventario',
+            is_antarctic_station INTEGER NOT NULL DEFAULT 0,
+            fetched_at_utc TEXT NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_station_catalog_fetched_at ON station_catalog(fetched_at_utc)",
+        """CREATE TABLE IF NOT EXISTS analysis_query_jobs (
+            job_id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            requested_start_utc TEXT NOT NULL,
+            effective_end_utc TEXT NOT NULL,
+            history_start_utc TEXT NOT NULL,
+            timezone_input TEXT NOT NULL,
+            aggregation TEXT NOT NULL,
+            selected_types_json TEXT NOT NULL,
+            playback_step TEXT NOT NULL,
+            status TEXT NOT NULL,
+            total_windows INTEGER NOT NULL,
+            cached_windows INTEGER NOT NULL,
+            missing_windows INTEGER NOT NULL,
+            completed_windows INTEGER NOT NULL,
+            total_api_calls_planned INTEGER NOT NULL,
+            completed_api_calls INTEGER NOT NULL,
+            frames_planned INTEGER NOT NULL,
+            frames_ready INTEGER NOT NULL,
+            playback_ready INTEGER NOT NULL DEFAULT 0,
+            message TEXT NOT NULL,
+            error_detail TEXT,
+            windows_json TEXT NOT NULL,
+            created_at_utc TEXT NOT NULL,
+            updated_at_utc TEXT NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_analysis_query_jobs_updated_at ON analysis_query_jobs(updated_at_utc)",
+    ]
+
     def _initialize(self) -> None:
-        with self._write_connection() as conn:
-            try:
+        if self._is_remote:
+            # Batch all DDL into a single HTTP request to avoid Vercel timeout
+            self._turso.batch_execute(self._DDL_STATEMENTS)
+        else:
+            with self._write_connection() as conn:
                 conn.execute("PRAGMA journal_mode = WAL")
-            except Exception:
-                pass  # Turso manages WAL internally
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS measurements (
-                    station_id TEXT NOT NULL,
-                    station_name TEXT NOT NULL,
-                    measured_at_utc TEXT NOT NULL,
-                    temperature_c REAL,
-                    pressure_hpa REAL,
-                    speed_mps REAL,
-                    direction_deg REAL,
-                    latitude REAL,
-                    longitude REAL,
-                    altitude_m REAL,
-                    fetched_at_utc TEXT NOT NULL,
-                    PRIMARY KEY (station_id, measured_at_utc)
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_measurements_station_datetime ON measurements(station_id, measured_at_utc)"
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS fetch_windows (
-                    station_id TEXT NOT NULL,
-                    start_utc TEXT NOT NULL,
-                    end_utc TEXT NOT NULL,
-                    fetched_at_utc TEXT NOT NULL,
-                    direction_checked INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (station_id, start_utc, end_utc)
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_fetch_windows_station_fetched_at ON fetch_windows(station_id, fetched_at_utc)"
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS station_catalog (
-                    station_id TEXT NOT NULL PRIMARY KEY,
-                    station_name TEXT NOT NULL,
-                    province TEXT,
-                    latitude REAL,
-                    longitude REAL,
-                    altitude_m REAL,
-                    data_endpoint TEXT NOT NULL DEFAULT 'valores-climatologicos-inventario',
-                    is_antarctic_station INTEGER NOT NULL DEFAULT 0,
-                    fetched_at_utc TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_station_catalog_fetched_at ON station_catalog(fetched_at_utc)"
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS analysis_query_jobs (
-                    job_id TEXT PRIMARY KEY,
-                    station_id TEXT NOT NULL,
-                    requested_start_utc TEXT NOT NULL,
-                    effective_end_utc TEXT NOT NULL,
-                    history_start_utc TEXT NOT NULL,
-                    timezone_input TEXT NOT NULL,
-                    aggregation TEXT NOT NULL,
-                    selected_types_json TEXT NOT NULL,
-                    playback_step TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    total_windows INTEGER NOT NULL,
-                    cached_windows INTEGER NOT NULL,
-                    missing_windows INTEGER NOT NULL,
-                    completed_windows INTEGER NOT NULL,
-                    total_api_calls_planned INTEGER NOT NULL,
-                    completed_api_calls INTEGER NOT NULL,
-                    frames_planned INTEGER NOT NULL,
-                    frames_ready INTEGER NOT NULL,
-                    playback_ready INTEGER NOT NULL DEFAULT 0,
-                    message TEXT NOT NULL,
-                    error_detail TEXT,
-                    windows_json TEXT NOT NULL,
-                    created_at_utc TEXT NOT NULL,
-                    updated_at_utc TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_analysis_query_jobs_updated_at ON analysis_query_jobs(updated_at_utc)"
-            )
-            self._ensure_columns(conn)
-            self._ensure_station_catalog_columns(conn)
-            self._ensure_fetch_windows_columns(conn)
-            conn.commit()
+                for stmt in self._DDL_STATEMENTS:
+                    conn.execute(stmt)
+                conn.commit()
 
     @staticmethod
     def _ensure_columns(conn) -> None:
