@@ -183,31 +183,12 @@ class PlaybackQueryJobsMixin:
             return
 
         processed_windows = 0
-        # Process newest windows first so months with real data (most recent) are fetched
-        # before older months that may return empty results from AEMET.
-        pending_indices = [
-            i for i, w in enumerate(windows)
-            if w.get("status") not in {"cached", "complete", "no_data"}
-        ]
-        pending_indices.sort(key=lambda i: windows[i].get("startUtc", ""), reverse=True)
-
-        # Track consecutive empty AEMET months to detect the data boundary.
-        # Stop after 2 consecutive empty months — beyond that AEMET has no data for this station.
-        consecutive_empty = 0
-        _MAX_CONSECUTIVE_EMPTY = 2
-
-        for index in pending_indices:
-            window = windows[index]
-
-            # --- Boundary detection: skip windows older than the data boundary ---
-            if consecutive_empty >= _MAX_CONSECUTIVE_EMPTY:
-                window["status"] = "no_data"
-                window["errorDetail"] = "Beyond AEMET data boundary — no older data available."
-                windows[index] = window
-                continue  # Don't write to DB, just update windows_json in memory
+        for index, window in enumerate(windows):
+            if window.get("status") in {"cached", "complete"}:
+                continue
 
             attempts = int(window.get("attempts", 0))
-            max_attempts = 4
+            max_attempts = 4  # Always 4; serverless mode retries within the 30s invocation window.
             success = False
             while attempts < max_attempts and not success:
                 attempts += 1
@@ -224,24 +205,10 @@ class PlaybackQueryJobsMixin:
                     window["status"] = "cached"
                     window["apiCallsCompleted"] = 0
                     window["errorDetail"] = None
-                    consecutive_empty = 0  # Cached = had data at some point
                     success = True
                     continue
                 try:
                     rows = self.aemet_client.fetch_station_data(start_utc, end_utc, station_id)
-                    if not rows:
-                        # AEMET returned no data for this window — normal for historical gaps
-                        # in Antarctic campaigns. Write the fetch_window to mark as checked,
-                        # and increment the boundary counter.
-                        logger.info(
-                            "AEMET returned no data for station=%s window=%s to %s "
-                            "(consecutive_empty=%d/%d).",
-                            station_id, start_utc.isoformat(), end_utc.isoformat(),
-                            consecutive_empty + 1, _MAX_CONSECUTIVE_EMPTY,
-                        )
-                        consecutive_empty += 1
-                    else:
-                        consecutive_empty = 0  # Real data resets the boundary counter
                     self.repository.upsert_measurements(
                         station_id=station_id,
                         rows=rows,
@@ -249,10 +216,10 @@ class PlaybackQueryJobsMixin:
                         end_utc=end_utc,
                     )
                     window["status"] = "complete"
-                    window["apiCallsCompleted"] = int(window.get("apiCallsPlanned", 2)) if rows else 0
+                    window["apiCallsCompleted"] = int(window.get("apiCallsPlanned", 2))
                     window["errorDetail"] = None
                     success = True
-                except Exception as exc:
+                except Exception as exc:  # Catches UpstreamServiceError and RuntimeError.
                     detail = str(exc)
                     window["errorDetail"] = detail
                     is_rate_limited = "429" in detail
@@ -314,38 +281,24 @@ class PlaybackQueryJobsMixin:
                         self.repository.upsert_analysis_query_job(payload)
                     return
 
-        # Write all no_data windows (boundary-skipped) to the job state in one final save.
-        payload["windows_json"] = windows
         payload["status"] = QueryJobStatus.COMPLETE.value
         payload["playback_ready"] = True
-        no_data_count = sum(1 for w in windows if w.get("status") == "no_data")
-        data_count = sum(1 for w in windows if w.get("status") in {"cached", "complete"})
-        if no_data_count:
-            payload["message"] = (
-                f"Done: {data_count} month(s) with data, "
-                f"{no_data_count} older month(s) beyond AEMET data boundary."
-            )
-        else:
-            payload["message"] = "All requested months are available in cache."
+        payload["message"] = "All requested months are available in cache."
         self._update_query_job_progress(payload)
         self.repository.upsert_analysis_query_job(payload)
         logger.info(
-            "Query job completed id=%s station=%s completed_windows=%d/%d completed_calls=%d/%d no_data=%d",
+            "Query job completed id=%s station=%s completed_windows=%d/%d completed_calls=%d/%d",
             job_id,
             station_id,
             payload.get("completed_windows"),
             payload.get("total_windows"),
             payload.get("completed_api_calls"),
             payload.get("total_api_calls_planned"),
-            no_data_count,
         )
 
     def _update_query_job_progress(self, payload: dict[str, Any]) -> None:
         windows: list[dict[str, Any]] = list(payload["windows_json"])
-        # "no_data" windows are beyond the AEMET data boundary — count them as done.
-        completed_windows = sum(
-            1 for w in windows if w.get("status") in {"cached", "complete", "no_data"}
-        )
+        completed_windows = sum(1 for window in windows if window.get("status") in {"cached", "complete"})
         completed_api_calls = sum(int(window.get("apiCallsCompleted", 0)) for window in windows)
         total_windows = max(int(payload.get("total_windows", 0)), 1)
         frames_planned = max(int(payload.get("frames_planned", 1)), 1)
@@ -354,7 +307,7 @@ class PlaybackQueryJobsMixin:
         payload["completed_windows"] = completed_windows
         payload["completed_api_calls"] = completed_api_calls
         payload["frames_ready"] = min(frames_planned, frames_ready)
-        payload["playback_ready"] = completed_windows >= int(payload.get("total_windows", 0))
+        payload["playback_ready"] = completed_windows == int(payload.get("total_windows", 0))
 
     def get_query_job_status(self, job_id: str) -> QueryJobStatusResponse:
         payload = self.repository.get_analysis_query_job(job_id)
