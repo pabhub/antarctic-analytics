@@ -81,12 +81,35 @@ class TursoHttpClient:
         return TursoCursor([])
 
     def executemany(self, sql: str, seq_of_params: list[tuple]) -> None:
+        if not seq_of_params:
+            return  # Nothing to do; avoid sending a close-only pipeline.
         requests = []
         for args in seq_of_params:
             stmt = {"sql": sql}
             if args:
                 stmt["args"] = [self._encode_arg(a) for a in args]
             requests.append({"type": "execute", "stmt": stmt})
+        requests.append({"type": "close"})
+        resp = self._http.post("/v2/pipeline", json={"requests": requests})
+        resp.raise_for_status()
+        self._check_pipeline_errors(resp.json())
+
+    def multi_execute(self, operations: list[tuple[str, list[tuple]]]) -> None:
+        """Execute multiple SQL batches in a **single** pipeline request.
+
+        Each operation is a ``(sql, list_of_param_tuples)`` pair, equivalent to
+        running ``executemany`` for each pair.  Because all statements share one
+        HTTP round-trip this is the closest Turso gets to an atomic write.
+        """
+        requests = []
+        for sql, param_list in operations:
+            for args in param_list:
+                stmt: dict = {"sql": sql}
+                if args:
+                    stmt["args"] = [self._encode_arg(a) for a in args]
+                requests.append({"type": "execute", "stmt": stmt})
+        if not requests:
+            return  # Nothing to execute.
         requests.append({"type": "close"})
         resp = self._http.post("/v2/pipeline", json={"requests": requests})
         resp.raise_for_status()
@@ -293,12 +316,15 @@ class SQLiteRepository:
                 self._turso.batch_execute(self._DDL_STATEMENTS)
 
             # Migrate: remove old rows that have +00:00 timezone suffixes.
-            # UPDATE REPLACE fails due to PRIMARY KEY conflict when clean rows already exist.
-            self._turso.batch_execute([
-                "DELETE FROM fetch_windows WHERE start_utc LIKE '%+00:00' OR end_utc LIKE '%+00:00'",
-                "DELETE FROM measurements WHERE measured_at_utc LIKE '%+00:00'",
-            ])
-            _log_seed("Timestamp migration complete.")
+            # Wrapped in try/except so migration failures are logged but don't crash the app.
+            try:
+                self._turso.batch_execute([
+                    "DELETE FROM fetch_windows WHERE start_utc LIKE '%+00:00' OR end_utc LIKE '%+00:00'",
+                    "DELETE FROM measurements WHERE measured_at_utc LIKE '%+00:00'",
+                ])
+                _log_seed("Timestamp migration complete.")
+            except Exception as mig_exc:
+                _log_seed(f"Timestamp migration warning (non-fatal): {mig_exc}")
         else:
             with self._write_connection() as conn:
                 conn.execute("PRAGMA journal_mode = WAL")
@@ -306,65 +332,33 @@ class SQLiteRepository:
                     conn.execute(stmt)
                 conn.commit()
 
-    @staticmethod
-    def _ensure_columns(conn) -> None:
-        try:
-            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(measurements)").fetchall()}
-        except Exception:
-            existing_columns = set()
-            
-        required_columns = {
-            "direction_deg": "ALTER TABLE measurements ADD COLUMN direction_deg REAL",
-            "latitude": "ALTER TABLE measurements ADD COLUMN latitude REAL",
-            "longitude": "ALTER TABLE measurements ADD COLUMN longitude REAL",
-            "altitude_m": "ALTER TABLE measurements ADD COLUMN altitude_m REAL",
-        }
-        for column, ddl in required_columns.items():
-            if column not in existing_columns:
-                try:
-                    conn.execute(ddl)
-                except Exception:
-                    pass
+    _MEASUREMENTS_UPSERT_SQL = """
+        INSERT INTO measurements (
+            station_id, station_name, measured_at_utc,
+            temperature_c, pressure_hpa, speed_mps, direction_deg,
+            latitude, longitude, altitude_m, fetched_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(station_id, measured_at_utc)
+        DO UPDATE SET
+            station_name=excluded.station_name,
+            temperature_c=excluded.temperature_c,
+            pressure_hpa=excluded.pressure_hpa,
+            speed_mps=excluded.speed_mps,
+            direction_deg=excluded.direction_deg,
+            latitude=COALESCE(excluded.latitude, measurements.latitude),
+            longitude=COALESCE(excluded.longitude, measurements.longitude),
+            altitude_m=COALESCE(excluded.altitude_m, measurements.altitude_m),
+            fetched_at_utc=excluded.fetched_at_utc
+    """
 
-    @staticmethod
-    def _ensure_station_catalog_columns(conn) -> None:
-        try:
-            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(station_catalog)").fetchall()}
-        except Exception:
-            existing_columns = set()
-            
-        required_columns = {
-            "data_endpoint": (
-                "ALTER TABLE station_catalog ADD COLUMN data_endpoint TEXT NOT NULL "
-                "DEFAULT 'valores-climatologicos-inventario'"
-            ),
-            "is_antarctic_station": (
-                "ALTER TABLE station_catalog ADD COLUMN is_antarctic_station INTEGER NOT NULL DEFAULT 0"
-            ),
-        }
-        for column, ddl in required_columns.items():
-            if column not in existing_columns:
-                try:
-                    conn.execute(ddl)
-                except Exception:
-                    pass
-
-    @staticmethod
-    def _ensure_fetch_windows_columns(conn) -> None:
-        try:
-            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(fetch_windows)").fetchall()}
-        except Exception:
-            existing_columns = set()
-            
-        required_columns = {
-            "direction_checked": "ALTER TABLE fetch_windows ADD COLUMN direction_checked INTEGER NOT NULL DEFAULT 0",
-        }
-        for column, ddl in required_columns.items():
-            if column not in existing_columns:
-                try:
-                    conn.execute(ddl)
-                except Exception:
-                    pass
+    _FETCH_WINDOW_UPSERT_SQL = """
+        INSERT INTO fetch_windows (station_id, start_utc, end_utc, fetched_at_utc, direction_checked)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(station_id, start_utc, end_utc)
+        DO UPDATE SET
+            fetched_at_utc = excluded.fetched_at_utc,
+            direction_checked = excluded.direction_checked
+    """
 
     def upsert_measurements(
         self,
@@ -374,63 +368,35 @@ class SQLiteRepository:
         end_utc: datetime,
     ) -> None:
         now_utc = _utc_iso(datetime.utcnow())
-        direction_checked = 1
         logger.debug(
             "Upsert measurements station=%s rows=%d start=%s end=%s",
-            station_id,
-            len(rows),
-            start_utc.isoformat(),
-            end_utc.isoformat(),
+            station_id, len(rows), start_utc.isoformat(), end_utc.isoformat(),
         )
-        with self._write_connection() as conn:
-            conn.executemany(
-                """
-                INSERT INTO measurements (
-                    station_id, station_name, measured_at_utc,
-                    temperature_c, pressure_hpa, speed_mps, direction_deg,
-                    latitude, longitude, altitude_m, fetched_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(station_id, measured_at_utc)
-                DO UPDATE SET
-                    station_name=excluded.station_name,
-                    temperature_c=excluded.temperature_c,
-                    pressure_hpa=excluded.pressure_hpa,
-                    speed_mps=excluded.speed_mps,
-                    direction_deg=excluded.direction_deg,
-                    latitude=COALESCE(excluded.latitude, measurements.latitude),
-                    longitude=COALESCE(excluded.longitude, measurements.longitude),
-                    altitude_m=COALESCE(excluded.altitude_m, measurements.altitude_m),
-                    fetched_at_utc=excluded.fetched_at_utc
-                """,
-                [
-                    (
-                        station_id,
-                        row.station_name,
-                        _utc_iso(row.measured_at_utc),
-                        row.temperature_c,
-                        row.pressure_hpa,
-                        row.speed_mps,
-                        row.direction_deg,
-                        row.latitude,
-                        row.longitude,
-                        row.altitude_m,
-                        now_utc,
-                    )
-                    for row in rows
-                ],
+        measurements_params = [
+            (
+                station_id, row.station_name, _utc_iso(row.measured_at_utc),
+                row.temperature_c, row.pressure_hpa, row.speed_mps, row.direction_deg,
+                row.latitude, row.longitude, row.altitude_m, now_utc,
             )
-            conn.execute(
-                """
-                INSERT INTO fetch_windows (station_id, start_utc, end_utc, fetched_at_utc, direction_checked)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(station_id, start_utc, end_utc)
-                DO UPDATE SET
-                    fetched_at_utc = excluded.fetched_at_utc,
-                    direction_checked = excluded.direction_checked
-                """,
-                (station_id, _utc_iso(start_utc), _utc_iso(end_utc), now_utc, direction_checked),
-            )
-            conn.commit()
+            for row in rows
+        ]
+        fetch_window_params = (station_id, _utc_iso(start_utc), _utc_iso(end_utc), now_utc, 1)
+
+        if self._is_remote:
+            # Turso: combine both writes into ONE pipeline request to approximate atomicity.
+            # Two separate execute() calls are two separate HTTP requests with no transaction.
+            operations: list[tuple[str, list[tuple]]] = []
+            if measurements_params:
+                operations.append((self._MEASUREMENTS_UPSERT_SQL, measurements_params))
+            operations.append((self._FETCH_WINDOW_UPSERT_SQL, [fetch_window_params]))
+            self._turso.multi_execute(operations)
+        else:
+            # SQLite: executemany + execute share the same connection → real transaction.
+            with self._write_connection() as conn:
+                if measurements_params:
+                    conn.executemany(self._MEASUREMENTS_UPSERT_SQL, measurements_params)
+                conn.execute(self._FETCH_WINDOW_UPSERT_SQL, fetch_window_params)
+                conn.commit()
 
     def has_fresh_fetch_window(
         self,

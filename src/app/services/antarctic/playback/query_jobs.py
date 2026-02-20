@@ -183,9 +183,16 @@ class PlaybackQueryJobsMixin:
             return
 
         processed_windows = 0
-        for index, window in enumerate(windows):
-            if window.get("status") in {"cached", "complete"}:
-                continue
+        # Process newest windows first so months with real data (most recent) are fetched
+        # before older months that may return empty results from AEMET.
+        pending_indices = [
+            i for i, w in enumerate(windows)
+            if w.get("status") not in {"cached", "complete"}
+        ]
+        pending_indices.sort(key=lambda i: windows[i].get("startUtc", ""), reverse=True)
+
+        for index in pending_indices:
+            window = windows[index]
 
             attempts = int(window.get("attempts", 0))
             max_attempts = 4
@@ -209,6 +216,13 @@ class PlaybackQueryJobsMixin:
                     continue
                 try:
                     rows = self.aemet_client.fetch_station_data(start_utc, end_utc, station_id)
+                    if not rows:
+                        # AEMET returned no data for this window — normal for historical gaps
+                        # in Antarctic campaigns. Write the fetch_window to avoid re-fetching.
+                        logger.info(
+                            "AEMET returned no data for station=%s window=%s to %s (expected for gaps).",
+                            station_id, start_utc.isoformat(), end_utc.isoformat(),
+                        )
                     self.repository.upsert_measurements(
                         station_id=station_id,
                         rows=rows,
@@ -216,10 +230,10 @@ class PlaybackQueryJobsMixin:
                         end_utc=end_utc,
                     )
                     window["status"] = "complete"
-                    window["apiCallsCompleted"] = int(window.get("apiCallsPlanned", 2))
+                    window["apiCallsCompleted"] = int(window.get("apiCallsPlanned", 2)) if rows else 0
                     window["errorDetail"] = None
                     success = True
-                except RuntimeError as exc:
+                except Exception as exc:
                     detail = str(exc)
                     window["errorDetail"] = detail
                     is_rate_limited = "429" in detail
