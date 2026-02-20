@@ -182,33 +182,58 @@ class PlaybackQueryJobsMixin:
             self.repository.upsert_analysis_query_job(payload)
             return
 
+        # --- Bulk AEMET pre-fetch ---
+        # AEMET's /antartida/ endpoint returns the same presigned data URL for any
+        # date range — it always delivers all available data for the station.  One
+        # call for the full job window is therefore equivalent to N one-month calls
+        # but uses only 1 quota unit instead of N.
+        from app.models import SourceMeasurement  # local import to avoid circular dep
+        history_start_utc = datetime.fromisoformat(str(payload["history_start_utc"]))
+        effective_end_utc_dt = datetime.fromisoformat(str(payload["effective_end_utc"]))
+
+        bulk_rows_by_month: dict[tuple[int, int], list[SourceMeasurement]] | None = None
+        try:
+            all_rows = self.aemet_client.fetch_station_data(
+                history_start_utc, effective_end_utc_dt, station_id
+            )
+            bulk_rows_by_month = {}
+            for row in all_rows:
+                key = (row.measured_at_utc.year, row.measured_at_utc.month)
+                bulk_rows_by_month.setdefault(key, []).append(row)
+            logger.info(
+                "Bulk pre-fetch id=%s station=%s: %d rows across %d months.",
+                job_id, station_id, len(all_rows), len(bulk_rows_by_month),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Bulk pre-fetch failed for station=%s (%s); will fall back to per-window AEMET calls.",
+                station_id, exc,
+            )
+
+        # If bulk succeeded, process all pending windows in this invocation (no per-window
+        # AEMET calls → no quota cost → safe to ignore max_windows for this path).
+        effective_max_windows = None if bulk_rows_by_month is not None else max_windows
+
         processed_windows = 0
         for index, window in enumerate(windows):
             if window.get("status") in {"cached", "complete"}:
                 continue
 
             attempts = int(window.get("attempts", 0))
-            max_attempts = 4  # Always 4; serverless mode retries within the 30s invocation window.
+            max_attempts = 4
             success = False
             while attempts < max_attempts and not success:
                 attempts += 1
                 window["attempts"] = attempts
-                window["status"] = "running"
-                windows[index] = window
-                payload["windows_json"] = windows
-                payload["message"] = f"Fetching month {index + 1}/{total_windows}."
-                self.repository.upsert_analysis_query_job(payload)
 
                 start_utc = datetime.fromisoformat(str(window["startUtc"]))
                 end_utc = datetime.fromisoformat(str(window["endUtc"]))
-                if self.repository.has_cached_fetch_window(station_id, start_utc, end_utc):
-                    window["status"] = "cached"
-                    window["apiCallsCompleted"] = 0
-                    window["errorDetail"] = None
-                    success = True
-                    continue
                 try:
-                    rows = self.aemet_client.fetch_station_data(start_utc, end_utc, station_id)
+                    if bulk_rows_by_month is not None:
+                        # Use pre-fetched bulk data — zero additional AEMET calls.
+                        rows = bulk_rows_by_month.get((start_utc.year, start_utc.month), [])
+                    else:
+                        rows = self.aemet_client.fetch_station_data(start_utc, end_utc, station_id)
                     self.repository.upsert_measurements(
                         station_id=station_id,
                         rows=rows,
@@ -272,7 +297,7 @@ class PlaybackQueryJobsMixin:
 
             if window.get("status") in {"cached", "complete"}:
                 processed_windows += 1
-                if max_windows is not None and processed_windows >= max_windows:
+                if effective_max_windows is not None and processed_windows >= effective_max_windows:
                     if int(payload.get("completed_windows", 0)) < int(payload.get("total_windows", 0)):
                         payload["status"] = QueryJobStatus.RUNNING.value
                         payload["message"] = (
@@ -318,8 +343,9 @@ class PlaybackQueryJobsMixin:
             if self._background_query_jobs_enabled():
                 self._start_query_job_thread(job_id)
             else:
-                # Serverless-safe mode: progress one month per polling request.
-                self._run_query_job_worker(job_id, max_windows=1)
+                # Serverless-safe mode: 2 windows per poll keeps within 10s Vercel limit
+                # even for data months (2 AEMET calls × ~1.5s + Turso overhead ≈ 7.5s).
+                self._run_query_job_worker(job_id, max_windows=2)
             payload = self.repository.get_analysis_query_job(job_id) or payload
         return self._to_query_job_status_response(payload)
 

@@ -7,7 +7,7 @@ import { renderDecisionGuidance, renderMetrics, renderRowsTable, renderSummaryTa
 import { stationDisplayName } from "./stations.js";
 import { DashboardActionsContext, LatestAvailabilityPayload } from "./actions_types.js";
 
-const QUERY_JOB_POLL_INTERVAL_MS = 750;
+const QUERY_JOB_POLL_INTERVAL_MS = 4_000;
 
 function snapshotAggregationForHistoryYears(years: number): "hourly" | "daily" {
   if (years <= 2) return "hourly";

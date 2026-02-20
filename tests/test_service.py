@@ -1123,4 +1123,6 @@ def test_query_job_progresses_via_status_polling_when_background_workers_disable
 
     assert status.status.value == "complete"
     assert status.completed_windows == status.total_windows
-    assert client.calls == created.missing_windows
+    # Bulk pre-fetch: one AEMET call covers all missing windows,
+    # instead of one call per window.
+    assert client.calls == 1
