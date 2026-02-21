@@ -158,19 +158,25 @@ src/
 └── app/
     ├── main.py                      # FastAPI app wiring + middleware
     ├── core/
+    │   ├── auth.py                  # JWT issue/verify/refresh primitives
     │   ├── config.py                # settings/env loading (cached)
     │   ├── exceptions.py            # custom exceptions
     │   └── logging.py               # logging setup
     ├── models/
+    │   ├── auth.py                  # token request/response models
     │   ├── station.py               # station/catalog/profile models
     │   ├── measurement.py           # time-series/query/export models
     │   └── analysis.py              # analysis/playback/timeframe models
     ├── services/
     │   ├── aemet_client.py          # AEMET client + throttling
+    │   ├── auth_service.py          # credential validation + token lifecycle
     │   ├── repository.py            # SQLite persistence
     │   ├── antarctic_service.py     # service facade
     │   └── antarctic/
     │       ├── stations.py          # station catalog/selection constraints
+    │       ├── constants.py         # shared domain constants
+    │       ├── math_utils.py        # wind/stat computation helpers
+    │       ├── windows.py           # fetch-window planning helpers
     │       ├── data.py              # cache-first retrieval + aggregation
     │       ├── analysis.py          # bootstrap + snapshot summaries
     │       └── playback/
@@ -196,22 +202,59 @@ frontend/src/
 ├── app.ts                           # dashboard entrypoint
 ├── login.ts                         # login entrypoint
 ├── config.ts                        # config entrypoint
-├── pages/                           # HTML shells
-├── styles/style.css                 # shared styles
+├── pages/
+│   ├── index.html                   # dashboard shell
+│   ├── login.html                   # login shell
+│   └── config.html                  # config shell
+├── styles/
+│   └── style.css                    # shared styles
 ├── components/                      # page/section templates
-│   ├── layout/                      # top nav + footer
-│   ├── dashboard/                   # dashboard sections
-│   ├── config/page.ts
-│   └── login/page.ts
+│   ├── render.ts                    # shared render helper
+│   ├── layout/                      # top navigation and footer
+│   │   ├── top_nav.ts               # top navigation bar component
+│   │   └── footer.ts                # page footer component
+│   ├── dashboard/                   # dashboard page components
+│   │   ├── analysis_report.ts       # report text rendering component
+│   │   ├── charts.ts                # chart container components
+│   │   ├── hero.ts                  # top summary hero section
+│   │   ├── page.ts                  # main dashboard page component
+│   │   ├── raw_tables.ts            # tabular data view components
+│   │   ├── results_skeleton.ts      # loading state placeholders
+│   │   └── station_workspace.ts     # main workspace view component
+│   ├── config/page.ts               # config page component
+│   └── login/page.ts                # login page component
 ├── core/
 │   ├── api.ts                       # fetch/auth/date formatting helpers
 │   ├── settings.ts                  # localStorage config (timezone/wind farm)
 │   ├── logger.ts                    # frontend debug logging helper
 │   ├── types.ts                     # API contracts
-│   ├── dom.ts
-│   └── navigation.ts
+│   ├── dom.ts                       # DOM traversal/manipulation helpers
+│   └── navigation.ts                # client-side routing utilities
 └── features/
-    ├── dashboard/                   # dashboard workflows/state/render/actions
+    ├── dashboard/                   # main dashboard logic & state
+    │   ├── actions_types.ts         # state action type definitions
+    │   ├── analysis_job.ts          # async analysis job polling/handling
+    │   ├── bootstrap_flow.ts        # initial cache warming flow
+    │   ├── chart_core.ts            # chart.js initialization/config
+    │   ├── chart_data.ts            # timeseries data formatting for charts
+    │   ├── chart_timeframe.ts       # timeframe selection/updating for charts
+    │   ├── chart_tooltips.ts        # chart tooltip generation
+    │   ├── charts.ts                # chart feature orchestration
+    │   ├── dashboard_actions.ts     # high-level UI interaction actions
+    │   ├── dashboard_state.ts       # context and state management
+    │   ├── date_ranges.ts           # date window logic helpers
+    │   ├── dom.ts                   # specific DOM manipulation helpers
+    │   ├── export_actions.ts        # Parquet/CSV file export handlers
+    │   ├── history.ts               # data history management
+    │   ├── measurement_types.ts     # TypeScript models for measurements
+    │   ├── playback_controls.ts     # play/pause UI controls
+    │   ├── playback_manager.ts      # timeframe animation/iteration state
+    │   ├── progress.ts              # job progress bar/status UI
+    │   ├── renderers.ts             # general UI rendering utilities
+    │   ├── sections.ts              # section visibility/toggling
+    │   ├── stations.ts              # station selection state
+    │   ├── timeframe_manager.ts     # timeframe grouping logic
+    │   └── timeframe_query.ts       # request handling for timeframes
     ├── overlay.ts                   # Leaflet map overlays
     ├── playback.ts                  # playback controller
     ├── timeframes/
